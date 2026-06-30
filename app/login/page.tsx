@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
+import LoginForm from "@/components/LoginForm";
 
 export default function LoginPage() {
   return (
@@ -11,35 +12,10 @@ export default function LoginPage() {
           <h1 className="text-3xl font-bold">Sign in</h1>
 
           <p className="mt-3 text-sm text-zinc-400">
-            placeholder
+            Sign in to access your private music locker.
           </p>
 
-          <form className="mt-8 space-y-4">
-            <div>
-              <label className="text-sm text-zinc-300">Email</label>
-              <input
-                type="email"
-                placeholder="you@example.com"
-                className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-white"
-              />
-            </div>
-
-            <div>
-              <label className="text-sm text-zinc-300">Password</label>
-              <input
-                type="password"
-                placeholder="••••••••"
-                className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-white"
-              />
-            </div>
-
-            <button
-              type="button"
-              className="w-full rounded-xl bg-white px-4 py-3 font-medium text-black transition hover:bg-zinc-200"
-            >
-              Sign in
-            </button>
-          </form>
+          <LoginForm />
 
           <p className="mt-6 text-sm text-zinc-500">
             Do not have an account yet?{" "}

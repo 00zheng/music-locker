@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
+import SignupForm from "@/components/SignupForm";
 
 export default function SignupPage() {
   return (
@@ -11,35 +12,11 @@ export default function SignupPage() {
           <h1 className="text-3xl font-bold">Create account</h1>
 
           <p className="mt-3 text-sm text-zinc-400">
-            placeholder
+            Create an account so your music library can sync across your
+            devices later.
           </p>
 
-          <form className="mt-8 space-y-4">
-            <div>
-              <label className="text-sm text-zinc-300">Email</label>
-              <input
-                type="email"
-                placeholder="you@example.com"
-                className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-white"
-              />
-            </div>
-
-            <div>
-              <label className="text-sm text-zinc-300">Password</label>
-              <input
-                type="password"
-                placeholder="Create a password"
-                className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-white"
-              />
-            </div>
-
-            <button
-              type="button"
-              className="w-full rounded-xl bg-white px-4 py-3 font-medium text-black transition hover:bg-zinc-200"
-            >
-              Create account
-            </button>
-          </form>
+          <SignupForm />
 
           <p className="mt-6 text-sm text-zinc-500">
             Already have an account?{" "}
