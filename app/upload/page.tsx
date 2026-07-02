@@ -3,13 +3,12 @@
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 
 import Navbar from "@/components/Navbar";
 import { supabase } from "@/lib/supabase";
-import MusicUploader from "./music-uploader";
+import MusicUploader from "../library/music-uploader";
 
-export default function LibraryPage() {
+export default function UploadPage() {
   const router = useRouter();
 
   const [user, setUser] = useState<User | null>(null);
@@ -48,32 +47,23 @@ export default function LibraryPage() {
       <Navbar />
 
       <section className="mx-auto max-w-6xl px-6 py-10">
-        <div className="mb-10 flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-zinc-500">
-              Your library
-            </p>
+        <div className="mb-10">
+          <p className="text-sm uppercase tracking-[0.3em] text-zinc-500">
+            Upload
+          </p>
 
-            <h1 className="mt-3 text-4xl font-bold tracking-tight">
-              Music Locker
-            </h1>
-
-            <p className="mt-4 max-w-2xl text-zinc-400">
-              You are signed in as{" "}
-              <span className="font-medium text-white">{user?.email}</span>.
-              Upload your music files and play them from your private locker.
-            </p>
-          </div>
-
-          <Link
-            href="/upload"
-            className="rounded-xl bg-white px-5 py-3 text-sm font-semibold text-black transition hover:bg-zinc-200"
-          >
+          <h1 className="mt-3 text-4xl font-bold tracking-tight">
             Upload Music
-          </Link>
+          </h1>
+
+          <p className="mt-4 max-w-2xl text-zinc-400">
+            You are signed in as{" "}
+            <span className="font-medium text-white">{user?.email}</span>.
+            Upload songs to your private music locker.
+          </p>
         </div>
 
-        <MusicUploader showUploader={false} />
+        <MusicUploader showLibrary={false} />
       </section>
     </main>
   );

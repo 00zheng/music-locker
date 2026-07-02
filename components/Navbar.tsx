@@ -1,23 +1,40 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import LogoutButton from "./LogoutButton";
 
 export default function Navbar() {
+  const pathname = usePathname();
+
+  const linkClass = (href: string) =>
+    pathname === href
+      ? "text-white font-semibold border-b-2 border-white pb-1"
+      : "text-gray-300 hover:text-white";
+
   return (
-    <header className="border-b border-zinc-800 bg-zinc-950 text-white">
-      <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link href="/" className="text-lg font-bold">
-          Music Locker
+    <nav className="w-full border-b border-white/10 bg-black/40 backdrop-blur-md">
+      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <Link href="/library" className="text-xl font-bold text-white">
+          music-locker
         </Link>
 
-        <div className="flex items-center gap-5 text-sm text-zinc-400">
-          <Link href="/library" className="transition hover:text-white">
+        <div className="flex items-center gap-6">
+          <Link href="/library" className={linkClass("/library")}>
             Library
           </Link>
 
-          <Link href="/login" className="transition hover:text-white">
-            Login
+          <Link href="/upload" className={linkClass("/upload")}>
+            Upload
           </Link>
+
+          <Link href="/settings" className={linkClass("/settings")}>
+            Settings
+          </Link>
+
+          <LogoutButton />
         </div>
-      </nav>
-    </header>
+      </div>
+    </nav>
   );
 }

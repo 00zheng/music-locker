@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { supabase } from "@/lib/supabase";
 
 type Track = {
@@ -14,7 +20,15 @@ type Track = {
   signedUrl?: string;
 };
 
-export default function MusicUploader() {
+type MusicUploaderProps = {
+  showUploader?: boolean;
+  showLibrary?: boolean;
+};
+
+export default function MusicUploader({
+  showUploader = true,
+  showLibrary = true,
+}: MusicUploaderProps) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [title, setTitle] = useState("");
   const [artist, setArtist] = useState("");
@@ -41,6 +55,7 @@ export default function MusicUploader() {
     const { data, error } = await supabase
       .from("tracks")
       .select("*")
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -74,8 +89,10 @@ export default function MusicUploader() {
   }, []);
 
   useEffect(() => {
-    loadTracks();
-  }, [loadTracks]);
+    if (showLibrary) {
+      loadTracks();
+    }
+  }, [loadTracks, showLibrary]);
 
   function cleanFileName(fileName: string) {
     return fileName
@@ -100,7 +117,7 @@ export default function MusicUploader() {
     return hasAudioMimeType || hasAudioExtension;
   }
 
-  async function handleUpload(event: React.FormEvent<HTMLFormElement>) {
+  async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!file) {
@@ -109,7 +126,9 @@ export default function MusicUploader() {
     }
 
     if (!isAudioFile(file)) {
-      setStatus("Please upload an audio file, such as MP3, WAV, M4A, OGG, or FLAC.");
+      setStatus(
+        "Please upload an audio file, such as MP3, WAV, M4A, OGG, or FLAC."
+      );
       return;
     }
 
@@ -175,7 +194,9 @@ export default function MusicUploader() {
     setStatus("Upload complete.");
     setIsUploading(false);
 
-    await loadTracks();
+    if (showLibrary) {
+      await loadTracks();
+    }
   }
 
   async function handleDelete(track: Track) {
@@ -207,115 +228,123 @@ export default function MusicUploader() {
   }
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[360px_1fr]">
-      <form
-        onSubmit={handleUpload}
-        className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6"
-      >
-        <h2 className="text-xl font-semibold">Upload a song</h2>
+    <div
+      className={
+        showUploader && showLibrary
+          ? "grid gap-8 lg:grid-cols-[360px_1fr]"
+          : "grid gap-8"
+      }
+    >
+      {showUploader && (
+        <form
+          onSubmit={handleUpload}
+          className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6"
+        >
+          <h2 className="text-xl font-semibold">Upload a song</h2>
 
-        <p className="mt-2 text-sm text-zinc-400">
-          Add an audio file to your private Supabase music locker.
-        </p>
-
-        <div className="mt-6 space-y-4">
-          <label className="block">
-            <span className="text-sm text-zinc-300">Song title</span>
-
-            <input
-              type="text"
-              value={title}
-              placeholder="Example: Late Night Demo"
-              onChange={(event) => setTitle(event.target.value)}
-              className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-white outline-none focus:border-violet-500"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm text-zinc-300">Artist</span>
-
-            <input
-              type="text"
-              value={artist}
-              placeholder="Optional"
-              onChange={(event) => setArtist(event.target.value)}
-              className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-white outline-none focus:border-violet-500"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm text-zinc-300">Audio file</span>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-              className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300"
-            />
-          </label>
-
-          <button
-            type="submit"
-            disabled={isUploading}
-            className="w-full rounded-lg bg-violet-600 px-4 py-2 font-medium text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isUploading ? "Uploading..." : "Upload Song"}
-          </button>
-
-          {status && <p className="text-sm text-zinc-400">{status}</p>}
-        </div>
-      </form>
-
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-xl font-semibold">Your songs</h2>
-
-          <p className="mt-1 text-sm text-zinc-400">
-            These are loaded from Supabase, not mock data.
+          <p className="mt-2 text-sm text-zinc-400">
+            Add an audio file to your private Supabase music locker.
           </p>
-        </div>
 
-        {tracks.length === 0 ? (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-            <p className="text-zinc-400">No songs uploaded yet.</p>
-          </div>
-        ) : (
-          tracks.map((track) => (
-            <article
-              key={track.id}
-              className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5"
+          <div className="mt-6 space-y-4">
+            <label className="block">
+              <span className="text-sm text-zinc-300">Song title</span>
+
+              <input
+                type="text"
+                value={title}
+                placeholder="Example: Late Night Demo"
+                onChange={(event) => setTitle(event.target.value)}
+                className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-white outline-none focus:border-violet-500"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-sm text-zinc-300">Artist</span>
+
+              <input
+                type="text"
+                value={artist}
+                placeholder="Optional"
+                onChange={(event) => setArtist(event.target.value)}
+                className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-white outline-none focus:border-violet-500"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-sm text-zinc-300">Audio file</span>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm"
+                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300"
+              />
+            </label>
+
+            <button
+              type="submit"
+              disabled={isUploading}
+              className="w-full rounded-lg bg-violet-600 px-4 py-2 font-medium text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold">{track.title}</h3>
+              {isUploading ? "Uploading..." : "Upload Song"}
+            </button>
 
-                  <p className="text-sm text-zinc-400">
-                    {track.artist || "Unknown artist"} ·{" "}
-                    {formatFileSize(track.file_size)}
-                  </p>
+            {status && <p className="text-sm text-zinc-400">{status}</p>}
+          </div>
+        </form>
+      )}
+
+      {showLibrary && (
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-xl font-semibold">Your songs</h2>
+
+            {status && <p className="mt-2 text-sm text-zinc-400">{status}</p>}
+          </div>
+
+          {tracks.length === 0 ? (
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
+              <p className="text-zinc-400">No songs uploaded yet.</p>
+            </div>
+          ) : (
+            tracks.map((track) => (
+              <article
+                key={track.id}
+                className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5"
+              >
+                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold">{track.title}</h3>
+
+                    <p className="text-sm text-zinc-400">
+                      {track.artist || "Unknown artist"} ·{" "}
+                      {formatFileSize(track.file_size)}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(track)}
+                    className="rounded-lg border border-red-900/60 px-3 py-1 text-sm text-red-400 hover:bg-red-950/40"
+                  >
+                    Delete
+                  </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => handleDelete(track)}
-                  className="rounded-lg border border-red-900/60 px-3 py-1 text-sm text-red-400 hover:bg-red-950/40"
-                >
-                  Delete
-                </button>
-              </div>
-
-              {track.signedUrl ? (
-                <audio controls src={track.signedUrl} className="w-full" />
-              ) : (
-                <p className="text-sm text-red-400">
-                  Could not create playback link.
-                </p>
-              )}
-            </article>
-          ))
-        )}
-      </section>
+                {track.signedUrl ? (
+                  <audio controls src={track.signedUrl} className="w-full" />
+                ) : (
+                  <p className="text-sm text-red-400">
+                    Could not create playback link.
+                  </p>
+                )}
+              </article>
+            ))
+          )}
+        </section>
+      )}
     </div>
   );
 }
