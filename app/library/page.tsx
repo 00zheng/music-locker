@@ -5,37 +5,9 @@ import type { User } from "@supabase/supabase-js";
 import { useRouter } from "next/navigation";
 
 import Navbar from "@/components/Navbar";
-import UploadBox from "@/components/UploadBox";
-import SongCard from "@/components/SongCard";
 import LogoutButton from "@/components/LogoutButton";
 import { supabase } from "@/lib/supabase";
-
-const mockSongs = [
-  {
-    id: 1,
-    title: "Late Night Demo",
-    artist: "Gavin",
-    fileType: "MP3",
-    size: "7.4 MB",
-    offline: false,
-  },
-  {
-    id: 2,
-    title: "Piano Idea",
-    artist: "Gavin",
-    fileType: "M4A",
-    size: "4.1 MB",
-    offline: true,
-  },
-  {
-    id: 3,
-    title: "Beat Draft",
-    artist: "Friend",
-    fileType: "WAV",
-    size: "22.8 MB",
-    offline: false,
-  },
-];
+import MusicUploader from "./music-uploader";
 
 export default function LibraryPage() {
   const router = useRouter();
@@ -89,30 +61,14 @@ export default function LibraryPage() {
             <p className="mt-4 max-w-2xl text-zinc-400">
               You are signed in as{" "}
               <span className="font-medium text-white">{user?.email}</span>.
-              Later, this page will show your real uploaded songs from
-              Supabase.
+              Upload your music files and play them from your private locker.
             </p>
           </div>
 
           <LogoutButton />
         </div>
 
-        <div className="grid gap-8 lg:grid-cols-[360px_1fr]">
-          <UploadBox />
-
-          <section className="space-y-4">
-            {mockSongs.map((song) => (
-              <SongCard
-                key={song.id}
-                title={song.title}
-                artist={song.artist}
-                fileType={song.fileType}
-                size={song.size}
-                offline={song.offline}
-              />
-            ))}
-          </section>
-        </div>
+        <MusicUploader />
       </section>
     </main>
   );
