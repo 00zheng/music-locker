@@ -1,34 +1,116 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --app-bg: #0b0b0b;
+  --app-bg-soft: #111111;
+  --app-text: #ededed;
+  --app-muted: #9b9b9b;
+  --app-border: rgba(255, 255, 255, 0.12);
+  --app-accent: #bdbdbd;
+  --app-accent-strong: #d8d8d8;
+  --app-accent-ink: #0b0b0b;
+  --app-gradient: linear-gradient(180deg, #111111 0%, #0b0b0b 100%);
+  --card-radius: 14px;
+  --density-gap: 1rem;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--app-bg);
+  --color-foreground: var(--app-text);
+  --font-sans: var(--font-sora);
+  --font-mono: var(--font-space-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html[data-theme="sunset"],
+html[data-theme="ocean"],
+html[data-theme="forest"],
+html[data-theme="nocturne"] {
+  --app-bg: #0b0b0b;
+  --app-bg-soft: #111111;
+  --app-text: #ededed;
+  --app-muted: #9b9b9b;
+  --app-border: rgba(255, 255, 255, 0.12);
+  --app-accent: #bdbdbd;
+  --app-accent-strong: #d8d8d8;
+  --app-accent-ink: #0b0b0b;
+  --app-gradient: linear-gradient(180deg, #111111 0%, #0b0b0b 100%);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+html[data-card-round="off"] {
+  --card-radius: 12px;
 }
 
-html {
-  background: #09090b;
+html[data-compact="on"] {
+  --density-gap: 0.7rem;
 }
 
 body {
   margin: 0;
+  min-height: 100vh;
+  background: var(--app-gradient), var(--app-bg);
+  color: var(--app-text);
+  font-family: var(--font-sora), "Segoe UI", sans-serif;
+}
+
+.app-shell {
+  background: transparent;
+  color: var(--app-text);
+}
+
+.app-card {
+  border-radius: var(--card-radius);
+  border: 1px solid var(--app-border);
+  background: var(--app-bg-soft);
+}
+
+.app-chip {
+  border-radius: 999px;
+  border: 1px solid var(--app-border);
+  background: #141414;
+}
+
+.app-input {
+  border-radius: 10px;
+  border: 1px solid var(--app-border);
+  background: #0f0f0f;
+  color: var(--app-text);
+}
+
+.app-input:focus {
+  outline: none;
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 1px var(--app-accent);
+}
+
+.app-button {
+  border-radius: 10px;
+  border: 1px solid var(--app-border);
+  background: var(--app-accent);
+  color: var(--app-accent-ink);
+  font-weight: 600;
+  transition: background 120ms ease;
+}
+
+.app-button:hover {
+  background: var(--app-accent-strong);
+}
+
+.app-grid-gap {
+  gap: var(--density-gap);
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.reveal-in {
+  animation: fade-up 180ms ease both;
 }

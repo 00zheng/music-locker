@@ -11,8 +11,8 @@ export default function HomePage() {
   }, [router]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-neutral-950 text-white">
-      <p className="text-gray-400">Opening music-locker...</p>
+    <main className="app-shell flex min-h-screen items-center justify-center text-[var(--app-text)]">
+      <p className="text-[var(--app-muted)]">Opening music-locker...</p>
     </main>
   );
 }

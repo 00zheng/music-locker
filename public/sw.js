@@ -1,9 +1,10 @@
-const CACHE_NAME = "music-locker-shell-v2";
+const CACHE_NAME = "music-locker-shell-v4";
+const OFFLINE_AUDIO_CACHE = "music-locker-audio-v1";
 
 const APP_SHELL_URLS = [
   "/",
   "/library",
-  "/upload",
+  "/profile",
   "/settings",
   "/login",
   "/signup",
@@ -25,7 +26,7 @@ self.addEventListener("activate", (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
-          .filter((cacheName) => cacheName !== CACHE_NAME)
+          .filter((cacheName) => ![CACHE_NAME, OFFLINE_AUDIO_CACHE].includes(cacheName))
           .map((cacheName) => caches.delete(cacheName))
       );
     })
