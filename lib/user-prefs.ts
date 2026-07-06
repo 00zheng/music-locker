@@ -1,3 +1,5 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 export type ThemeId = "nocturne" | "sunset" | "ocean" | "forest";
 
 export type AppThemePreferences = {
@@ -41,11 +43,22 @@ export type PlaylistFolder = {
   createdAt: string;
 };
 
+export type SyncedUserPreferences = {
+  version: 1;
+  updatedAt: string;
+  profile: UserProfilePreferences;
+  theme: AppThemePreferences;
+  trackMetadata: TrackMetadataById;
+  playlists: Playlist[];
+  playlistFolders: PlaylistFolder[];
+};
+
 const PROFILE_PREFIX = "music-locker-profile:";
 const THEME_PREFIX = "music-locker-theme:";
 const TRACK_META_PREFIX = "music-locker-track-meta:";
 const PLAYLIST_PREFIX = "music-locker-playlists:";
 const PLAYLIST_FOLDER_PREFIX = "music-locker-playlist-folders:";
+const SYNC_BUCKET = "music";
 
 const defaultTheme: AppThemePreferences = {
   themeId: "nocturne",
@@ -103,6 +116,74 @@ function playlistKey(userId: string) {
 
 function playlistFolderKey(userId: string) {
   return `${PLAYLIST_FOLDER_PREFIX}${userId}`;
+}
+
+function syncedPreferencesPath(userId: string) {
+  return `${userId}/.music-locker/preferences.json`;
+}
+
+function normalizePreferences(value: Partial<SyncedUserPreferences>): SyncedUserPreferences {
+  return {
+    version: 1,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : new Date().toISOString(),
+    profile: {
+      ...defaultProfile,
+      ...(value.profile || {}),
+    },
+    theme: {
+      ...defaultTheme,
+      ...(value.theme || {}),
+    },
+    trackMetadata: value.trackMetadata || {},
+    playlists: Array.isArray(value.playlists)
+      ? value.playlists.map((playlist, index) => ({
+          ...playlist,
+          manualOrder:
+            typeof playlist.manualOrder === "number" ? playlist.manualOrder : index,
+          trackIds: Array.isArray(playlist.trackIds) ? playlist.trackIds : [],
+          coverDataUrl: playlist.coverDataUrl || null,
+          folderId: playlist.folderId || null,
+        }))
+      : [],
+    playlistFolders: Array.isArray(value.playlistFolders)
+      ? value.playlistFolders.map((folder, index) => ({
+          ...folder,
+          manualOrder:
+            typeof folder.manualOrder === "number" ? folder.manualOrder : index,
+        }))
+      : [],
+  };
+}
+
+function hasMeaningfulPreferences(preferences: SyncedUserPreferences) {
+  return (
+    Boolean(preferences.profile.username || preferences.profile.bio || preferences.profile.avatarDataUrl) ||
+    preferences.theme.themeId !== defaultTheme.themeId ||
+    preferences.theme.roundedCards !== defaultTheme.roundedCards ||
+    preferences.theme.compactMode !== defaultTheme.compactMode ||
+    Object.keys(preferences.trackMetadata).length > 0 ||
+    preferences.playlists.length > 0 ||
+    preferences.playlistFolders.length > 0
+  );
+}
+
+function localUserPreferences(userId: string): SyncedUserPreferences {
+  return normalizePreferences({
+    updatedAt: new Date().toISOString(),
+    profile: getUserProfilePreferences(userId),
+    theme: getAppThemePreferences(userId),
+    trackMetadata: getTrackMetadata(userId),
+    playlists: getPlaylists(userId),
+    playlistFolders: getPlaylistFolders(userId),
+  });
+}
+
+function writeLocalUserPreferences(userId: string, preferences: SyncedUserPreferences) {
+  setUserProfilePreferences(userId, preferences.profile);
+  setAppThemePreferences(userId, preferences.theme);
+  setTrackMetadata(userId, preferences.trackMetadata);
+  setPlaylists(userId, preferences.playlists);
+  setPlaylistFolders(userId, preferences.playlistFolders);
 }
 
 export function getUserProfilePreferences(userId: string) {
@@ -167,6 +248,68 @@ export function getPlaylistFolders(userId: string) {
 
 export function setPlaylistFolders(userId: string, folders: PlaylistFolder[]) {
   writeJson(playlistFolderKey(userId), folders);
+}
+
+export async function loadSyncedUserPreferences(
+  supabase: SupabaseClient,
+  userId: string
+) {
+  const localPreferences = localUserPreferences(userId);
+  const { data, error } = await supabase.storage
+    .from(SYNC_BUCKET)
+    .download(syncedPreferencesPath(userId));
+
+  if (!error && data) {
+    try {
+      const remotePreferences = normalizePreferences(JSON.parse(await data.text()));
+      writeLocalUserPreferences(userId, remotePreferences);
+      return {
+        preferences: remotePreferences,
+        source: "cloud" as const,
+      };
+    } catch {
+      return {
+        preferences: localPreferences,
+        source: "local" as const,
+      };
+    }
+  }
+
+  if (hasMeaningfulPreferences(localPreferences)) {
+    await saveSyncedUserPreferences(supabase, userId, localPreferences);
+  }
+
+  return {
+    preferences: localPreferences,
+    source: "local" as const,
+  };
+}
+
+export async function saveSyncedUserPreferences(
+  supabase: SupabaseClient,
+  userId: string,
+  value: Partial<SyncedUserPreferences>
+) {
+  const preferences = normalizePreferences({
+    ...localUserPreferences(userId),
+    ...value,
+    updatedAt: new Date().toISOString(),
+  });
+  const payload = JSON.stringify(preferences);
+
+  writeLocalUserPreferences(userId, preferences);
+
+  const { error } = await supabase.storage
+    .from(SYNC_BUCKET)
+    .upload(syncedPreferencesPath(userId), new Blob([payload], { type: "application/json" }), {
+      upsert: true,
+      contentType: "application/json",
+    });
+
+  return {
+    preferences,
+    error,
+  };
 }
 
 export function applyThemeToDocument(theme: AppThemePreferences) {

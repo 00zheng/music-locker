@@ -9,8 +9,8 @@ import type { User } from "@supabase/supabase-js";
 import Navbar from "@/components/Navbar";
 import { supabase } from "@/lib/supabase";
 import {
-  getUserProfilePreferences,
-  setUserProfilePreferences,
+  loadSyncedUserPreferences,
+  saveSyncedUserPreferences,
   type UserProfilePreferences,
 } from "@/lib/user-prefs";
 
@@ -190,7 +190,8 @@ export default function ProfilePage() {
       }
 
       setUser(data.user);
-      setProfile(getUserProfilePreferences(data.user.id));
+      const { preferences } = await loadSyncedUserPreferences(supabase, data.user.id);
+      setProfile(preferences.profile);
       await loadStorage(data.user);
       setCheckingAuth(false);
     }
@@ -217,14 +218,20 @@ export default function ProfilePage() {
     }));
   }
 
-  function saveProfile() {
+  async function saveProfile() {
     if (!user) {
       return;
     }
 
-    setUserProfilePreferences(user.id, profile);
+    const { error } = await saveSyncedUserPreferences(supabase, user.id, { profile });
+
+    if (error) {
+      setStatus(`Saved on this device. Cloud sync failed: ${error.message}`);
+      return;
+    }
+
     window.dispatchEvent(new Event("music-locker:profile-updated"));
-    setStatus("Profile updated.");
+    setStatus("Profile updated and synced.");
   }
 
   async function updatePassword() {
@@ -331,7 +338,7 @@ export default function ProfilePage() {
 
                 <button
                   type="button"
-                  onClick={saveProfile}
+                  onClick={() => void saveProfile()}
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-white px-4 text-sm font-semibold text-black"
                 >
                   <ProfileIcon name="save" />

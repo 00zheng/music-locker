@@ -7,15 +7,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import Navbar from "@/components/Navbar";
 import {
-  getPlaylistFolders,
-  getPlaylists,
-  getTrackMetadata,
-  setPlaylistFolders,
-  setPlaylists,
-  setTrackMetadata,
+  loadSyncedUserPreferences,
+  saveSyncedUserPreferences,
   type PlaylistFolder,
   type Playlist,
+  type SyncedUserPreferences,
   type TrackMetadataById,
 } from "@/lib/user-prefs";
 import { dispatchPlayQueue } from "@/components/PlayerBridge";
@@ -283,6 +281,41 @@ export default function LibraryScreen({ playlistId }: Props) {
     return tracksWithOfflineInfo;
   }, []);
 
+  function persistSyncedPreferences(
+    value: Partial<SyncedUserPreferences>,
+    successMessage?: string
+  ) {
+    if (!user) {
+      return Promise.resolve();
+    }
+
+    return saveSyncedUserPreferences(supabase, user.id, value).then(({ error }) => {
+      if (error) {
+        setStatus(`Saved on this device. Cloud sync failed: ${error.message}`);
+        return;
+      }
+
+      if (successMessage) {
+        setStatus(successMessage);
+      }
+    });
+  }
+
+  function persistPlaylists(nextPlaylists: Playlist[], successMessage?: string) {
+    setPlaylistsState(nextPlaylists);
+    return persistSyncedPreferences({ playlists: nextPlaylists }, successMessage);
+  }
+
+  function persistPlaylistFolders(nextFolders: PlaylistFolder[], successMessage?: string) {
+    setPlaylistFoldersState(nextFolders);
+    return persistSyncedPreferences({ playlistFolders: nextFolders }, successMessage);
+  }
+
+  function persistTrackMetadata(nextMetadata: TrackMetadataById, successMessage?: string) {
+    setTrackMetadataById(nextMetadata);
+    return persistSyncedPreferences({ trackMetadata: nextMetadata }, successMessage);
+  }
+
   const loadData = useCallback(async () => {
     setLoading(true);
 
@@ -300,8 +333,10 @@ export default function LibraryScreen({ playlistId }: Props) {
     }
 
     setUser(currentUser);
-    const nextPlaylists = getPlaylists(currentUser.id);
-    const nextPlaylistFolders = getPlaylistFolders(currentUser.id);
+    const { preferences } = await loadSyncedUserPreferences(supabase, currentUser.id);
+    const nextPlaylists = preferences.playlists;
+    const nextPlaylistFolders = preferences.playlistFolders;
+    const nextTrackMetadata = preferences.trackMetadata;
     const currentPlaylist = playlistId
       ? nextPlaylists.find((playlist) => playlist.id === playlistId)
       : null;
@@ -321,7 +356,7 @@ export default function LibraryScreen({ playlistId }: Props) {
       const availableOfflineTracks = offlineTracksWithUrls.filter((track) => track.isOfflineAvailable);
 
       replaceTracks(availableOfflineTracks);
-      setTrackMetadataById(getTrackMetadata(currentUser.id));
+      setTrackMetadataById(nextTrackMetadata);
       setPlaylistsState(nextPlaylists);
       setPlaylistFoldersState(nextPlaylistFolders);
       setPlaylistCoverUrl(currentPlaylist?.coverDataUrl || null);
@@ -349,7 +384,7 @@ export default function LibraryScreen({ playlistId }: Props) {
     const tracksWithOfflineInfo = await attachOfflineInfo(tracksWithUrls);
 
     replaceTracks(tracksWithOfflineInfo);
-    setTrackMetadataById(getTrackMetadata(currentUser.id));
+    setTrackMetadataById(nextTrackMetadata);
     setPlaylistsState(nextPlaylists);
     setPlaylistFoldersState(nextPlaylistFolders);
     setPlaylistCoverUrl(currentPlaylist?.coverDataUrl || null);
@@ -388,10 +423,8 @@ export default function LibraryScreen({ playlistId }: Props) {
       },
     ];
 
-    setPlaylists(user.id, nextPlaylists);
-    setPlaylistsState(nextPlaylists);
+    persistPlaylists(nextPlaylists, "Playlist created and synced.");
     setNewPlaylistName("");
-    setStatus("Playlist created.");
   }
 
   function createFolder() {
@@ -415,10 +448,8 @@ export default function LibraryScreen({ playlistId }: Props) {
       },
     ];
 
-    setPlaylistFolders(user.id, nextFolders);
-    setPlaylistFoldersState(nextFolders);
+    persistPlaylistFolders(nextFolders, "Folder created and synced.");
     setNewFolderName("");
-    setStatus("Folder created.");
   }
 
   function movePlaylistToFolder(targetPlaylistId: string, folderId: string | null) {
@@ -430,9 +461,10 @@ export default function LibraryScreen({ playlistId }: Props) {
       playlist.id === targetPlaylistId ? { ...playlist, folderId } : playlist
     );
 
-    setPlaylists(user.id, nextPlaylists);
-    setPlaylistsState(nextPlaylists);
-    setStatus(folderId ? "Playlist moved to folder." : "Playlist moved to library.");
+    persistPlaylists(
+      nextPlaylists,
+      folderId ? "Playlist moved to folder and synced." : "Playlist moved to library and synced."
+    );
   }
 
   async function uploadTrackFiles(fileList: FileList | null) {
@@ -492,8 +524,7 @@ export default function LibraryScreen({ playlistId }: Props) {
           : playlist
       );
 
-      setPlaylists(user.id, nextPlaylists);
-      setPlaylistsState(nextPlaylists);
+      await persistPlaylists(nextPlaylists);
     }
 
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -520,11 +551,9 @@ export default function LibraryScreen({ playlistId }: Props) {
         : playlist
     );
 
-    setPlaylists(user.id, nextPlaylists);
-    setPlaylistsState(nextPlaylists);
+    persistPlaylists(nextPlaylists, "Cover updated and synced.");
     setPlaylistCoverUrl(dataUrl);
     if (coverInputRef.current) coverInputRef.current.value = "";
-    setStatus("Cover updated.");
   }
 
   function playerTrackFromTrack(track: Track) {
@@ -572,10 +601,8 @@ export default function LibraryScreen({ playlistId }: Props) {
         : playlist
     );
 
-    setPlaylists(user.id, nextPlaylists);
-    setPlaylistsState(nextPlaylists);
+    persistPlaylists(nextPlaylists, "Track removed from playlist and synced.");
     setOpenTrackMenuId(null);
-    setStatus("Track removed from playlist.");
   }
 
   function reorderTrack(targetTrackId: string) {
@@ -603,10 +630,8 @@ export default function LibraryScreen({ playlistId }: Props) {
         : playlist
     );
 
-    setPlaylists(user.id, nextPlaylists);
-    setPlaylistsState(nextPlaylists);
+    persistPlaylists(nextPlaylists, "Playlist order updated and synced.");
     setDraggedTrackId(null);
-    setStatus("Playlist order updated.");
   }
 
   function startRenamingTrack(track: Track) {
@@ -634,11 +659,9 @@ export default function LibraryScreen({ playlistId }: Props) {
       },
     };
 
-    setTrackMetadata(user.id, nextMetadata);
-    setTrackMetadataById(nextMetadata);
+    persistTrackMetadata(nextMetadata, "Track renamed and synced.");
     setRenamingTrackId(null);
     setRenameValue("");
-    setStatus("Track renamed.");
   }
 
   async function shareTrack(track: Track) {
@@ -723,7 +746,14 @@ export default function LibraryScreen({ playlistId }: Props) {
   }
 
   if (loading) {
-    return <p className="text-sm text-[var(--app-muted)]">Loading...</p>;
+    return (
+      <>
+        <Navbar />
+        <main className="app-shell min-h-screen px-6 py-8 text-[var(--app-text)]">
+          <p className="text-sm text-[var(--app-muted)]">Loading...</p>
+        </main>
+      </>
+    );
   }
 
   if (!user) {
@@ -732,348 +762,354 @@ export default function LibraryScreen({ playlistId }: Props) {
 
   if (!playlistId) {
     return (
-      <main className="app-shell min-h-screen px-6 py-8 text-[var(--app-text)]">
-        <div className="mx-auto max-w-5xl">
-          <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <h1 className="text-3xl font-semibold">Your Library</h1>
-              <p className="mt-2 text-sm text-[var(--app-muted)]">Simple playlists and folders.</p>
-            </div>
+      <>
+        <Navbar />
+        <main className="app-shell min-h-screen px-6 py-8 text-[var(--app-text)]">
+          <div className="mx-auto max-w-5xl">
+            <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <h1 className="text-3xl font-semibold">Your Library</h1>
+                <p className="mt-2 text-sm text-[var(--app-muted)]">Simple playlists and folders.</p>
+              </div>
 
-            <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr_auto]">
-              <input
-                type="text"
-                value={newFolderName}
-                onChange={(event) => setNewFolderName(event.target.value)}
-                placeholder="New folder"
-                className="app-input px-3 py-2 text-sm"
-              />
-              <button type="button" onClick={createFolder} className="rounded-md border border-[var(--app-border)] px-4 py-2 text-sm">
-                Add Folder
-              </button>
-              <input
-                type="text"
-                value={newPlaylistName}
-                onChange={(event) => setNewPlaylistName(event.target.value)}
-                placeholder="New playlist"
-                className="app-input px-3 py-2 text-sm"
-              />
-              <button type="button" onClick={createPlaylist} className="app-button px-4 py-2 text-sm">
-                Add Playlist
-              </button>
-            </div>
-          </div>
-
-          <div className="mb-5 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedFolderId(null)}
-              className={`rounded-full border px-3 py-1.5 text-sm ${
-                selectedFolderId === null
-                  ? "border-white text-white"
-                  : "border-[var(--app-border)] text-[var(--app-muted)]"
-              }`}
-            >
-              All
-            </button>
-            {[...playlistFolders]
-              .sort((a, b) => a.manualOrder - b.manualOrder)
-              .map((folder) => (
-                <button
-                  key={folder.id}
-                  type="button"
-                  onClick={() => setSelectedFolderId(folder.id)}
-                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${
-                    selectedFolderId === folder.id
-                      ? "border-white text-white"
-                      : "border-[var(--app-border)] text-[var(--app-muted)]"
-                  }`}
-                >
-                  <InlineIcon name="folder" className="h-4 w-4" />
-                  {folder.name}
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr_auto]">
+                <input
+                  type="text"
+                  value={newFolderName}
+                  onChange={(event) => setNewFolderName(event.target.value)}
+                  placeholder="New folder"
+                  className="app-input px-3 py-2 text-sm"
+                />
+                <button type="button" onClick={createFolder} className="rounded-md border border-[var(--app-border)] px-4 py-2 text-sm">
+                  Add Folder
                 </button>
-              ))}
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {visiblePlaylists
-              .map((playlist) => {
-                const playlistTracks = tracks.filter((track) => playlist.trackIds.includes(track.id));
-                const firstCover =
-                  playlist.coverDataUrl ||
-                  trackMetadataById[playlistTracks[0]?.id || ""]?.coverDataUrl ||
-                  null;
-
-                return (
-                  <div key={playlist.id} className="app-card overflow-hidden p-3">
-                    <Link href={`/library/${playlist.id}`} className="group block">
-                      <div className="aspect-square overflow-hidden rounded-md bg-[#151515]">
-                        {firstCover ? (
-                          <img src={firstCover} alt={playlist.name} className="h-full w-full object-cover" />
-                        ) : (
-                          <div className="flex h-full items-center justify-center text-sm text-[var(--app-muted)]">
-                            Empty
-                          </div>
-                        )}
-                      </div>
-                      <div className="mt-3">
-                        <p className="text-sm font-medium text-[var(--app-text)]">{playlist.name}</p>
-                        <p className="text-xs text-[var(--app-muted)]">{formatCount(playlist.trackIds.length)}</p>
-                      </div>
-                    </Link>
-                    <label className="mt-3 block">
-                      <span className="sr-only">Move {playlist.name} to folder</span>
-                      <select
-                        value={playlist.folderId || ""}
-                        onChange={(event) => movePlaylistToFolder(playlist.id, event.target.value || null)}
-                        className="app-input w-full px-2 py-1.5 text-xs"
-                      >
-                        <option value="">Library</option>
-                        {[...playlistFolders]
-                          .sort((a, b) => a.manualOrder - b.manualOrder)
-                          .map((folder) => (
-                            <option key={folder.id} value={folder.id}>
-                              {folder.name}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
-                  </div>
-                );
-              })}
-          </div>
-
-          {visiblePlaylists.length === 0 ? (
-            <div className="mt-8 rounded-lg border border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">
-              No playlists in this folder.
+                <input
+                  type="text"
+                  value={newPlaylistName}
+                  onChange={(event) => setNewPlaylistName(event.target.value)}
+                  placeholder="New playlist"
+                  className="app-input px-3 py-2 text-sm"
+                />
+                <button type="button" onClick={createPlaylist} className="app-button px-4 py-2 text-sm">
+                  Add Playlist
+                </button>
+              </div>
             </div>
-          ) : null}
-        </div>
-      </main>
+
+            <div className="mb-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedFolderId(null)}
+                className={`rounded-full border px-3 py-1.5 text-sm ${
+                  selectedFolderId === null
+                    ? "border-white text-white"
+                    : "border-[var(--app-border)] text-[var(--app-muted)]"
+                }`}
+              >
+                All
+              </button>
+              {[...playlistFolders]
+                .sort((a, b) => a.manualOrder - b.manualOrder)
+                .map((folder) => (
+                  <button
+                    key={folder.id}
+                    type="button"
+                    onClick={() => setSelectedFolderId(folder.id)}
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${
+                      selectedFolderId === folder.id
+                        ? "border-white text-white"
+                        : "border-[var(--app-border)] text-[var(--app-muted)]"
+                    }`}
+                  >
+                    <InlineIcon name="folder" className="h-4 w-4" />
+                    {folder.name}
+                  </button>
+                ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {visiblePlaylists
+                .map((playlist) => {
+                  const playlistTracks = tracks.filter((track) => playlist.trackIds.includes(track.id));
+                  const firstCover =
+                    playlist.coverDataUrl ||
+                    trackMetadataById[playlistTracks[0]?.id || ""]?.coverDataUrl ||
+                    null;
+
+                  return (
+                    <div key={playlist.id} className="app-card overflow-hidden p-3">
+                      <Link href={`/library/${playlist.id}`} className="group block">
+                        <div className="aspect-square overflow-hidden rounded-md bg-[#151515]">
+                          {firstCover ? (
+                            <img src={firstCover} alt={playlist.name} className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-sm text-[var(--app-muted)]">
+                              Empty
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-3">
+                          <p className="text-sm font-medium text-[var(--app-text)]">{playlist.name}</p>
+                          <p className="text-xs text-[var(--app-muted)]">{formatCount(playlist.trackIds.length)}</p>
+                        </div>
+                      </Link>
+                      <label className="mt-3 block">
+                        <span className="sr-only">Move {playlist.name} to folder</span>
+                        <select
+                          value={playlist.folderId || ""}
+                          onChange={(event) => movePlaylistToFolder(playlist.id, event.target.value || null)}
+                          className="app-input w-full px-2 py-1.5 text-xs"
+                        >
+                          <option value="">Library</option>
+                          {[...playlistFolders]
+                            .sort((a, b) => a.manualOrder - b.manualOrder)
+                            .map((folder) => (
+                              <option key={folder.id} value={folder.id}>
+                                {folder.name}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    </div>
+                  );
+                })}
+            </div>
+
+            {visiblePlaylists.length === 0 ? (
+              <div className="mt-8 rounded-lg border border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">
+                No playlists in this folder.
+              </div>
+            ) : null}
+          </div>
+        </main>
+      </>
     );
   }
 
   return (
-    <main className="app-shell min-h-screen px-5 py-6 pb-32 text-[var(--app-text)] sm:px-8">
-      <div className="mx-auto max-w-6xl">
-        <div className="mb-8 flex items-center justify-between gap-4">
-          <Link href="/library" className="text-sm text-[var(--app-muted)]">
-            Back
-          </Link>
-          <p className="text-sm text-[var(--app-muted)]">{user.email}</p>
-        </div>
-
-        <div className="grid gap-10 lg:grid-cols-[minmax(280px,420px)_1fr] lg:items-start">
-          <div className="lg:sticky lg:top-8">
-            <label className="group relative block aspect-square cursor-pointer overflow-hidden rounded-[18px] bg-[#151515] shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
-              {playlistCoverUrl ? (
-                <img
-                  src={playlistCoverUrl}
-                  alt={activePlaylist?.name || "playlist cover"}
-                  className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_25%_20%,#2b2b2b,transparent_32%),linear-gradient(145deg,#181818,#0c0c0c)] text-sm text-[var(--app-muted)]">
-                  No cover
-                </div>
-              )}
-              <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent px-5 pb-5 pt-16 text-center text-sm font-medium text-white opacity-95">
-                Change cover art
-              </span>
-              <input ref={coverInputRef} type="file" accept="image/*" onChange={replacePlaylistCover} className="hidden" />
-            </label>
+    <>
+      <Navbar />
+      <main className="app-shell min-h-screen px-5 py-6 pb-32 text-[var(--app-text)] sm:px-8">
+        <div className="mx-auto max-w-6xl">
+          <div className="mb-8 flex items-center justify-between gap-4">
+            <Link href="/library" className="text-sm text-[var(--app-muted)]">
+              Back
+            </Link>
+            <p className="text-sm text-[var(--app-muted)]">{user.email}</p>
           </div>
 
-          <div className="min-w-0 space-y-5">
-            <div className="flex items-start justify-between gap-5">
-              <div className="min-w-0">
-                <p className="mb-2 truncate text-sm text-[var(--app-muted)]">
-                  {user.email} - {visibleTracks.length} tracks
-                </p>
-                <h1 className="truncate text-4xl font-semibold leading-tight text-white sm:text-5xl">
-                  {activePlaylist?.name || "Playlist"}
-                </h1>
+          <div className="grid gap-10 lg:grid-cols-[minmax(280px,420px)_1fr] lg:items-start">
+            <div className="lg:sticky lg:top-8">
+              <label className="group relative block aspect-square cursor-pointer overflow-hidden rounded-[18px] bg-[#151515] shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+                {playlistCoverUrl ? (
+                  <img
+                    src={playlistCoverUrl}
+                    alt={activePlaylist?.name || "playlist cover"}
+                    className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_25%_20%,#2b2b2b,transparent_32%),linear-gradient(145deg,#181818,#0c0c0c)] text-sm text-[var(--app-muted)]">
+                    No cover
+                  </div>
+                )}
+                <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent px-5 pb-5 pt-16 text-center text-sm font-medium text-white opacity-95">
+                  Change cover art
+                </span>
+                <input ref={coverInputRef} type="file" accept="image/*" onChange={replacePlaylistCover} className="hidden" />
+              </label>
+            </div>
+
+            <div className="min-w-0 space-y-5">
+              <div className="flex items-start justify-between gap-5">
+                <div className="min-w-0">
+                  <p className="mb-2 truncate text-sm text-[var(--app-muted)]">
+                    {user.email} - {visibleTracks.length} tracks
+                  </p>
+                  <h1 className="truncate text-4xl font-semibold leading-tight text-white sm:text-5xl">
+                    {activePlaylist?.name || "Playlist"}
+                  </h1>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={playFirstTrack}
+                  disabled={visibleTracks.length === 0}
+                  aria-label="Play playlist"
+                  title="Play playlist"
+                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[var(--app-border)] text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <InlineIcon name="play" className="h-5 w-5" />
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={playFirstTrack}
-                disabled={visibleTracks.length === 0}
-                aria-label="Play playlist"
-                title="Play playlist"
-                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[var(--app-border)] text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <InlineIcon name="play" className="h-5 w-5" />
-              </button>
-            </div>
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="audio/*"
+                  multiple
+                  onChange={chooseTrackFile}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                  className="flex h-11 w-full items-center justify-center rounded-xl bg-white/[0.08] text-sm font-semibold text-white transition hover:bg-white/[0.12]"
+                >
+                  {isUploading ? "Uploading..." : "+ Add tracks"}
+                </button>
+              </div>
 
-            <div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="audio/*"
-                multiple
-                onChange={chooseTrackFile}
-                className="hidden"
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-                className="flex h-11 w-full items-center justify-center rounded-xl bg-white/[0.08] text-sm font-semibold text-white transition hover:bg-white/[0.12]"
-              >
-                {isUploading ? "Uploading..." : "+ Add tracks"}
-              </button>
-            </div>
+              <div>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search"
+                  className="app-input mb-3 w-full px-3 py-2 text-sm"
+                />
 
-            <div>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search"
-                className="app-input mb-3 w-full px-3 py-2 text-sm"
-              />
+                <div className="divide-y divide-white/[0.06]">
+                  {visibleTracks.map((track, index) => {
+                    const displayTitle = trackMetadataById[track.id]?.title || track.title;
+                    const displayArtist = trackMetadataById[track.id]?.artist || track.artist || "Unknown artist";
+                    const trackDate = formatTrackDate(track.created_at);
 
-              <div className="divide-y divide-white/[0.06]">
-                {visibleTracks.map((track, index) => {
-                  const displayTitle = trackMetadataById[track.id]?.title || track.title;
-                  const displayArtist = trackMetadataById[track.id]?.artist || track.artist || "Unknown artist";
-                  const trackDate = formatTrackDate(track.created_at);
-
-                  return (
-                    <div
-                      key={track.id}
-                      draggable={renamingTrackId !== track.id}
-                      onDragStart={() => setDraggedTrackId(track.id)}
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={() => reorderTrack(track.id)}
-                      onDragEnd={() => setDraggedTrackId(null)}
-                      className={`group relative grid grid-cols-[2.5rem_1fr_auto] items-center gap-3 py-3 ${
-                        draggedTrackId === track.id ? "opacity-45" : ""
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => playTrackAtIndex(index)}
-                        disabled={renamingTrackId === track.id}
-                        className="text-right text-sm text-[var(--app-muted)] group-hover:text-white disabled:cursor-default"
+                    return (
+                      <div
+                        key={track.id}
+                        draggable={renamingTrackId !== track.id}
+                        onDragStart={() => setDraggedTrackId(track.id)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => reorderTrack(track.id)}
+                        onDragEnd={() => setDraggedTrackId(null)}
+                        className={`group relative grid grid-cols-[2.5rem_1fr_auto] items-center gap-3 py-3 ${
+                          draggedTrackId === track.id ? "opacity-45" : ""
+                        }`}
                       >
-                        {index + 1}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => playTrackAtIndex(index)}
+                          disabled={renamingTrackId === track.id}
+                          className="text-right text-sm text-[var(--app-muted)] group-hover:text-white disabled:cursor-default"
+                        >
+                          {index + 1}
+                        </button>
 
-                      <div className="min-w-0">
-                        {renamingTrackId === track.id ? (
-                          <div className="flex max-w-xl gap-2">
-                            <input
-                              value={renameValue}
-                              onChange={(event) => setRenameValue(event.target.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") {
-                                  event.preventDefault();
-                                  saveTrackName(track.id);
-                                }
+                        <div className="min-w-0">
+                          {renamingTrackId === track.id ? (
+                            <div className="flex max-w-xl gap-2">
+                              <input
+                                value={renameValue}
+                                onChange={(event) => setRenameValue(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    saveTrackName(track.id);
+                                  }
 
-                                if (event.key === "Escape") {
-                                  setRenamingTrackId(null);
-                                  setRenameValue("");
-                                }
-                              }}
-                              className="app-input min-w-0 flex-1 px-3 py-1 text-sm"
-                              autoFocus
-                            />
-                            <button
-                              type="button"
-                              onClick={() => saveTrackName(track.id)}
-                              className="rounded-md bg-white px-3 py-1 text-xs font-semibold text-black"
-                            >
-                              Save
-                            </button>
-                          </div>
-                        ) : (
-                          <button type="button" onClick={() => playTrackAtIndex(index)} className="block w-full text-left">
-                            <span className="flex min-w-0 items-center gap-2">
-                              <span className="truncate text-sm font-semibold text-white">{displayTitle}</span>
-                              {track.isOfflineAvailable ? (
-                                <span className="shrink-0 rounded-full border border-green-900/60 px-2 py-0.5 text-[10px] font-medium text-green-300">
-                                  Offline
-                                </span>
-                              ) : null}
-                            </span>
-                          </button>
-                        )}
-                        <span className="block truncate text-xs text-[var(--app-muted)]">
-                          {displayArtist}{trackDate ? ` - ${trackDate}` : ""}{track.offlineOnly ? " - downloaded only" : ""}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setOpenTrackMenuId((currentTrackId) => (currentTrackId === track.id ? null : track.id))}
-                        className="rounded-full px-3 py-1 text-lg leading-none text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
-                        aria-label={`Open menu for ${displayTitle}`}
-                      >
-                        ...
-                      </button>
-
-                      {openTrackMenuId === track.id ? (
-                        <div className="absolute right-0 top-10 z-20 w-44 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[#181818] py-1 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
-                          <button
-                            type="button"
-                            onClick={() => startRenamingTrack(track)}
-                            className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
-                          >
-                            Rename
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void shareTrack(track)}
-                            className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
-                          >
-                            Share
-                          </button>
-                          {track.isOfflineAvailable ? (
-                            <button
-                              type="button"
-                              onClick={() => void removeTrackOffline(track)}
-                              className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
-                            >
-                              Remove offline
-                            </button>
+                                  if (event.key === "Escape") {
+                                    setRenamingTrackId(null);
+                                    setRenameValue("");
+                                  }
+                                }}
+                                className="app-input min-w-0 flex-1 px-3 py-1 text-sm"
+                                autoFocus
+                              />
+                              <button
+                                type="button"
+                                onClick={() => saveTrackName(track.id)}
+                                className="rounded-md bg-white px-3 py-1 text-xs font-semibold text-black"
+                              >
+                                Save
+                              </button>
+                            </div>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => void downloadTrackOffline(track)}
-                              disabled={!track.signedUrl}
-                              className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              Download offline
+                            <button type="button" onClick={() => playTrackAtIndex(index)} className="block w-full text-left">
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span className="truncate text-sm font-semibold text-white">{displayTitle}</span>
+                                {track.isOfflineAvailable ? (
+                                  <span className="shrink-0 rounded-full border border-green-900/60 px-2 py-0.5 text-[10px] font-medium text-green-300">
+                                    Offline
+                                  </span>
+                                ) : null}
+                              </span>
                             </button>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => removeTrackFromPlaylist(track.id)}
-                            className="block w-full px-3 py-2 text-left text-red-300 hover:bg-white/[0.08]"
-                          >
-                            Delete from playlist
-                          </button>
+                          <span className="block truncate text-xs text-[var(--app-muted)]">
+                            {displayArtist}{trackDate ? ` - ${trackDate}` : ""}{track.offlineOnly ? " - downloaded only" : ""}
+                          </span>
                         </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                        <button
+                          type="button"
+                          onClick={() => setOpenTrackMenuId((currentTrackId) => (currentTrackId === track.id ? null : track.id))}
+                          className="rounded-full px-3 py-1 text-lg leading-none text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
+                          aria-label={`Open menu for ${displayTitle}`}
+                        >
+                          ...
+                        </button>
+
+                        {openTrackMenuId === track.id ? (
+                          <div className="absolute right-0 top-10 z-20 w-44 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[#181818] py-1 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                            <button
+                              type="button"
+                              onClick={() => startRenamingTrack(track)}
+                              className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
+                            >
+                              Rename
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void shareTrack(track)}
+                              className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
+                            >
+                              Share
+                            </button>
+                            {track.isOfflineAvailable ? (
+                              <button
+                                type="button"
+                                onClick={() => void removeTrackOffline(track)}
+                                className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
+                              >
+                                Remove offline
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void downloadTrackOffline(track)}
+                                disabled={!track.signedUrl}
+                                className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Download offline
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => removeTrackFromPlaylist(track.id)}
+                              className="block w-full px-3 py-2 text-left text-red-300 hover:bg-white/[0.08]"
+                            >
+                              Delete from playlist
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {visibleTracks.length === 0 ? (
+                  <div className="py-12 text-center text-sm text-[var(--app-muted)]">
+                    This playlist is empty.
+                  </div>
+                ) : null}
               </div>
 
-              {visibleTracks.length === 0 ? (
-                <div className="py-12 text-center text-sm text-[var(--app-muted)]">
-                  This playlist is empty.
-                </div>
-              ) : null}
+              {status ? <p className="text-sm text-[var(--app-muted)]">{status}</p> : null}
             </div>
-
-            {status ? <p className="text-sm text-[var(--app-muted)]">{status}</p> : null}
           </div>
         </div>
-      </div>
-    </main>
+      </main>
+    </>
   );
 }

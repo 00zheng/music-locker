@@ -2,7 +2,11 @@
 
 import { useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { applyThemeToDocument, getAppThemePreferences } from "@/lib/user-prefs";
+import {
+  applyThemeToDocument,
+  getAppThemePreferences,
+  loadSyncedUserPreferences,
+} from "@/lib/user-prefs";
 
 export default function ThemeBoot() {
   useEffect(() => {
@@ -15,9 +19,11 @@ export default function ThemeBoot() {
       }
 
       applyThemeToDocument(getAppThemePreferences(userId));
+      const { preferences } = await loadSyncedUserPreferences(supabase, userId);
+      applyThemeToDocument(preferences.theme);
     }
 
-    loadTheme();
+    void loadTheme();
   }, []);
 
   return null;

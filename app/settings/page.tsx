@@ -9,10 +9,8 @@ import Navbar from "@/components/Navbar";
 import { supabase } from "@/lib/supabase";
 import {
   applyThemeToDocument,
-  getAppThemePreferences,
-  getUserProfilePreferences,
-  setAppThemePreferences,
-  setUserProfilePreferences,
+  loadSyncedUserPreferences,
+  saveSyncedUserPreferences,
   type AppThemePreferences,
   type ThemeId,
   type UserProfilePreferences,
@@ -65,36 +63,48 @@ export default function SettingsPage() {
       }
 
       setUser(data.user);
-      setProfile(getUserProfilePreferences(data.user.id));
-
-      const savedTheme = getAppThemePreferences(data.user.id);
-      setTheme(savedTheme);
-      applyThemeToDocument(savedTheme);
+      const { preferences } = await loadSyncedUserPreferences(supabase, data.user.id);
+      setProfile(preferences.profile);
+      setTheme(preferences.theme);
+      applyThemeToDocument(preferences.theme);
 
       setCheckingAuth(false);
     }
 
-    checkUser();
+    void checkUser();
   }, [router]);
 
-  function saveProfile() {
+  async function saveProfile() {
     if (!user) {
       return;
     }
 
-    setUserProfilePreferences(user.id, profile);
-    setStatus("Profile updated.");
+    const { error } = await saveSyncedUserPreferences(supabase, user.id, { profile });
+
+    if (error) {
+      setStatus(`Saved on this device. Cloud sync failed: ${error.message}`);
+      return;
+    }
+
+    window.dispatchEvent(new Event("music-locker:profile-updated"));
+    setStatus("Profile updated and synced.");
   }
 
-  function saveTheme(nextTheme: AppThemePreferences) {
+  async function saveTheme(nextTheme: AppThemePreferences) {
     if (!user) {
       return;
     }
 
     setTheme(nextTheme);
-    setAppThemePreferences(user.id, nextTheme);
     applyThemeToDocument(nextTheme);
-    setStatus("Theme preferences updated.");
+    const { error } = await saveSyncedUserPreferences(supabase, user.id, { theme: nextTheme });
+
+    if (error) {
+      setStatus(`Saved on this device. Cloud sync failed: ${error.message}`);
+      return;
+    }
+
+    setStatus("Theme preferences updated and synced.");
   }
 
   async function handleAvatarChange(file: File) {
@@ -225,7 +235,7 @@ export default function SettingsPage() {
               <select
                 value={theme.themeId}
                 onChange={(event) =>
-                  saveTheme({
+                  void saveTheme({
                     ...theme,
                     themeId: event.target.value as ThemeId,
                   })
@@ -243,7 +253,7 @@ export default function SettingsPage() {
             <p className="text-sm text-[var(--app-muted)]">Account email: {user?.email}</p>
 
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={saveProfile} className="app-button px-4 py-2 text-sm">
+              <button type="button" onClick={() => void saveProfile()} className="app-button px-4 py-2 text-sm">
                 Save
               </button>
 
