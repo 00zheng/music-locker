@@ -1,4 +1,4 @@
-const CACHE_NAME = "music-locker-shell-v1";
+const CACHE_NAME = "music-locker-shell-v2";
 
 const APP_SHELL_URLS = [
   "/",

@@ -18,12 +18,109 @@ type Track = {
   file_size: number | null;
   created_at: string;
   signedUrl?: string;
+  offlineUrl?: string;
+  isOfflineAvailable?: boolean;
+  offlineOnly?: boolean;
+};
+
+type OfflineTrackRecord = {
+  id: string;
+  title: string;
+  artist: string | null;
+  storage_path: string;
+  mime_type: string | null;
+  file_size: number | null;
+  created_at: string;
 };
 
 type MusicUploaderProps = {
   showUploader?: boolean;
   showLibrary?: boolean;
 };
+
+const OFFLINE_AUDIO_CACHE = "music-locker-audio-v1";
+const OFFLINE_TRACKS_PREFIX = "music-locker-offline-tracks:";
+
+function offlineAudioRequest(trackId: string) {
+  return new Request(`/offline-audio/${trackId}`);
+}
+
+function offlineTracksKey(userId: string) {
+  return `${OFFLINE_TRACKS_PREFIX}${userId}`;
+}
+
+function readOfflineTrackRecords(userId: string): OfflineTrackRecord[] {
+  try {
+    const raw = localStorage.getItem(offlineTracksKey(userId));
+
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+function writeOfflineTrackRecords(
+  userId: string,
+  tracks: OfflineTrackRecord[]
+) {
+  localStorage.setItem(offlineTracksKey(userId), JSON.stringify(tracks));
+}
+
+function saveOfflineTrackRecord(userId: string, track: Track) {
+  const existingTracks = readOfflineTrackRecords(userId);
+
+  const record: OfflineTrackRecord = {
+    id: track.id,
+    title: track.title,
+    artist: track.artist,
+    storage_path: track.storage_path,
+    mime_type: track.mime_type,
+    file_size: track.file_size,
+    created_at: track.created_at,
+  };
+
+  const withoutCurrentTrack = existingTracks.filter(
+    (savedTrack) => savedTrack.id !== track.id
+  );
+
+  writeOfflineTrackRecords(userId, [record, ...withoutCurrentTrack]);
+}
+
+function removeOfflineTrackRecord(userId: string, trackId: string) {
+  const existingTracks = readOfflineTrackRecords(userId);
+
+  const updatedTracks = existingTracks.filter(
+    (savedTrack) => savedTrack.id !== trackId
+  );
+
+  writeOfflineTrackRecords(userId, updatedTracks);
+}
+
+async function getCachedAudioUrl(trackId: string) {
+  if (!("caches" in window)) {
+    return undefined;
+  }
+
+  const cache = await caches.open(OFFLINE_AUDIO_CACHE);
+  const response = await cache.match(offlineAudioRequest(trackId));
+
+  if (!response) {
+    return undefined;
+  }
+
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
 
 export default function MusicUploader({
   showUploader = true,
@@ -35,36 +132,114 @@ export default function MusicUploader({
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const objectUrlsRef = useRef<string[]>([]);
+
+  const replaceTracks = useCallback((nextTracks: Track[]) => {
+    objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+
+    objectUrlsRef.current = nextTracks
+      .map((track) => track.offlineUrl)
+      .filter((url): url is string => Boolean(url));
+
+    setTracks(nextTracks);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
+
+  const attachOfflineInfo = useCallback(async (inputTracks: Track[]) => {
+    const tracksWithOfflineInfo = await Promise.all(
+      inputTracks.map(async (track) => {
+        const offlineUrl = await getCachedAudioUrl(track.id);
+
+        return {
+          ...track,
+          offlineUrl,
+          isOfflineAvailable: Boolean(offlineUrl),
+        };
+      })
+    );
+
+    return tracksWithOfflineInfo;
+  }, []);
+
+  async function getActiveUserId() {
+    if (currentUserId) {
+      return currentUserId;
+    }
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    return session?.user?.id ?? null;
+  }
 
   const loadTracks = useCallback(async () => {
     setStatus("Loading your music...");
 
     const {
       data: { user },
-      error: userError,
     } = await supabase.auth.getUser();
 
-    if (userError || !user) {
+    let activeUser = user;
+
+    if (!activeUser) {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      activeUser = session?.user ?? null;
+    }
+
+    if (!activeUser) {
       setStatus("You must be signed in to view your library.");
-      setTracks([]);
+      replaceTracks([]);
       return;
     }
+
+    setCurrentUserId(activeUser.id);
 
     const { data, error } = await supabase
       .from("tracks")
       .select("*")
-      .eq("user_id", user.id)
+      .eq("user_id", activeUser.id)
       .order("created_at", { ascending: false });
 
     if (error) {
-      setStatus(`Could not load tracks: ${error.message}`);
+      const offlineOnlyTracks = readOfflineTrackRecords(activeUser.id).map(
+        (track) => ({
+          ...track,
+          offlineOnly: true,
+        })
+      );
+
+      const offlineTracksWithUrls = await attachOfflineInfo(offlineOnlyTracks);
+      const availableOfflineTracks = offlineTracksWithUrls.filter(
+        (track) => track.isOfflineAvailable
+      );
+
+      replaceTracks(availableOfflineTracks);
+
+      if (availableOfflineTracks.length > 0) {
+        setStatus("Offline mode: showing downloaded songs.");
+      } else {
+        setStatus(`Could not load tracks: ${error.message}`);
+      }
+
       return;
     }
 
-    const tracksWithUrls = await Promise.all(
-      (data ?? []).map(async (track) => {
+    const databaseTracks = (data ?? []) as Track[];
+
+    const tracksWithSignedUrls = await Promise.all(
+      databaseTracks.map(async (track) => {
         const { data: signedData, error: signedUrlError } =
           await supabase.storage
             .from("music")
@@ -84,9 +259,11 @@ export default function MusicUploader({
       })
     );
 
-    setTracks(tracksWithUrls);
+    const tracksWithOfflineInfo = await attachOfflineInfo(tracksWithSignedUrls);
+
+    replaceTracks(tracksWithOfflineInfo);
     setStatus("");
-  }, []);
+  }, [attachOfflineInfo, replaceTracks]);
 
   useEffect(() => {
     if (showLibrary) {
@@ -191,16 +368,83 @@ export default function MusicUploader({
       fileInputRef.current.value = "";
     }
 
-    setStatus("Upload complete.");
     setIsUploading(false);
+    setStatus(
+      showLibrary
+        ? "Upload complete."
+        : "Upload complete. Go to Library to play it."
+    );
 
     if (showLibrary) {
       await loadTracks();
     }
   }
 
+  async function handleDownloadOffline(track: Track) {
+    if (!track.signedUrl) {
+      setStatus("Could not download this song because its playback link is missing.");
+      return;
+    }
+
+    if (!("caches" in window)) {
+      setStatus("Offline downloads are not supported in this browser.");
+      return;
+    }
+
+    setStatus(`Downloading "${track.title}" for offline playback...`);
+
+    try {
+      const response = await fetch(track.signedUrl);
+
+      if (!response.ok) {
+        setStatus("Download failed. Please try again.");
+        return;
+      }
+
+      const cache = await caches.open(OFFLINE_AUDIO_CACHE);
+      await cache.put(offlineAudioRequest(track.id), response.clone());
+
+      const activeUserId = await getActiveUserId();
+
+      if (!activeUserId) {
+        setStatus("Downloaded, but could not save offline metadata.");
+        return;
+      }
+
+      saveOfflineTrackRecord(activeUserId, track);
+
+      setStatus(`"${track.title}" is now available offline.`);
+      await loadTracks();
+    } catch {
+      setStatus("Download failed. Check your connection and try again.");
+    }
+  }
+
+  async function handleRemoveOffline(track: Track) {
+    if (!("caches" in window)) {
+      setStatus("Offline storage is not supported in this browser.");
+      return;
+    }
+
+    const activeUserId = await getActiveUserId();
+
+    setStatus(`Removing offline copy of "${track.title}"...`);
+
+    const cache = await caches.open(OFFLINE_AUDIO_CACHE);
+    await cache.delete(offlineAudioRequest(track.id));
+
+    if (activeUserId) {
+      removeOfflineTrackRecord(activeUserId, track.id);
+    }
+
+    setStatus(`Removed offline copy of "${track.title}".`);
+    await loadTracks();
+  }
+
   async function handleDelete(track: Track) {
     setStatus("Deleting track...");
+
+    const activeUserId = await getActiveUserId();
 
     const { error: storageError } = await supabase.storage
       .from("music")
@@ -221,6 +465,15 @@ export default function MusicUploader({
         `File deleted, but the database record was not deleted: ${databaseError.message}`
       );
       return;
+    }
+
+    if ("caches" in window) {
+      const cache = await caches.open(OFFLINE_AUDIO_CACHE);
+      await cache.delete(offlineAudioRequest(track.id));
+    }
+
+    if (activeUserId) {
+      removeOfflineTrackRecord(activeUserId, track.id);
     }
 
     setStatus("Track deleted.");
@@ -301,6 +554,11 @@ export default function MusicUploader({
           <div>
             <h2 className="text-xl font-semibold">Your songs</h2>
 
+            <p className="mt-1 text-sm text-zinc-400">
+              These are loaded from Supabase. Songs marked offline can play
+              without internet.
+            </p>
+
             {status && <p className="mt-2 text-sm text-zinc-400">{status}</p>}
           </div>
 
@@ -309,39 +567,83 @@ export default function MusicUploader({
               <p className="text-zinc-400">No songs uploaded yet.</p>
             </div>
           ) : (
-            tracks.map((track) => (
-              <article
-                key={track.id}
-                className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5"
-              >
-                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <h3 className="text-lg font-semibold">{track.title}</h3>
+            tracks.map((track) => {
+              const audioSource = track.offlineUrl || track.signedUrl;
 
-                    <p className="text-sm text-zinc-400">
-                      {track.artist || "Unknown artist"} ·{" "}
-                      {formatFileSize(track.file_size)}
-                    </p>
+              return (
+                <article
+                  key={track.id}
+                  className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5"
+                >
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-lg font-semibold">
+                          {track.title}
+                        </h3>
+
+                        {track.isOfflineAvailable && (
+                          <span className="rounded-full border border-green-900/70 px-2 py-0.5 text-xs text-green-400">
+                            Offline
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-sm text-zinc-400">
+                        {track.artist || "Unknown artist"} ·{" "}
+                        {formatFileSize(track.file_size)}
+                      </p>
+
+                      {track.offlineOnly && (
+                        <p className="mt-1 text-xs text-zinc-500">
+                          Offline-only view. Reconnect to sync with Supabase.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {track.isOfflineAvailable ? (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveOffline(track)}
+                          className="rounded-lg border border-zinc-700 px-3 py-1 text-sm text-zinc-300 hover:bg-zinc-800"
+                        >
+                          Remove Offline
+                        </button>
+                      ) : (
+                        track.signedUrl && (
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadOffline(track)}
+                            className="rounded-lg border border-green-900/70 px-3 py-1 text-sm text-green-400 hover:bg-green-950/40"
+                          >
+                            Download Offline
+                          </button>
+                        )
+                      )}
+
+                      {!track.offlineOnly && (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(track)}
+                          className="rounded-lg border border-red-900/60 px-3 py-1 text-sm text-red-400 hover:bg-red-950/40"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(track)}
-                    className="rounded-lg border border-red-900/60 px-3 py-1 text-sm text-red-400 hover:bg-red-950/40"
-                  >
-                    Delete
-                  </button>
-                </div>
-
-                {track.signedUrl ? (
-                  <audio controls src={track.signedUrl} className="w-full" />
-                ) : (
-                  <p className="text-sm text-red-400">
-                    Could not create playback link.
-                  </p>
-                )}
-              </article>
-            ))
+                  {audioSource ? (
+                    <audio controls src={audioSource} className="w-full" />
+                  ) : (
+                    <p className="text-sm text-red-400">
+                      Could not create playback link.
+                    </p>
+                  )}
+                </article>
+              );
+            })
           )}
         </section>
       )}
