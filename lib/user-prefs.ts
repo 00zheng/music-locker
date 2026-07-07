@@ -219,14 +219,10 @@ function mergePreferences(
     ...preferredPreferences.deletedPlaylistFolderIds,
     ...fallbackPreferences.deletedPlaylistFolderIds,
   ]);
-  const playlistIds = uniqueValues([
-    ...preferredPreferences.playlists.map((playlist) => playlist.id),
-    ...fallbackPreferences.playlists.map((playlist) => playlist.id),
-  ]).filter((playlistId) => !deletedPlaylistIds.includes(playlistId));
-  const folderIds = uniqueValues([
-    ...preferredPreferences.playlistFolders.map((folder) => folder.id),
-    ...fallbackPreferences.playlistFolders.map((folder) => folder.id),
-  ]).filter((folderId) => !deletedPlaylistFolderIds.includes(folderId));
+  const playlistIds = uniqueValues(preferredPreferences.playlists.map((playlist) => playlist.id))
+    .filter((playlistId) => !deletedPlaylistIds.includes(playlistId));
+  const folderIds = uniqueValues(preferredPreferences.playlistFolders.map((folder) => folder.id))
+    .filter((folderId) => !deletedPlaylistFolderIds.includes(folderId));
 
   return normalizePreferences({
     ...preferredPreferences,
@@ -322,6 +318,74 @@ function writeLocalUserPreferences(userId: string, preferences: SyncedUserPrefer
   setPlaylistFolders(userId, preferences.playlistFolders);
 }
 
+function mergePlaylistUpdates(
+  basePlaylists: Playlist[],
+  updatedPlaylists: Playlist[],
+  deletedPlaylistIds: string[],
+  deletedPlaylistFolderIds: string[]
+) {
+  return uniqueValues([
+    ...basePlaylists.map((playlist) => playlist.id),
+    ...updatedPlaylists.map((playlist) => playlist.id),
+  ])
+    .filter((playlistId) => !deletedPlaylistIds.includes(playlistId))
+    .flatMap((playlistId): Playlist[] => {
+      const playlist =
+        updatedPlaylists.find((currentPlaylist) => currentPlaylist.id === playlistId) ||
+        basePlaylists.find((currentPlaylist) => currentPlaylist.id === playlistId);
+
+      if (!playlist) {
+        return [];
+      }
+
+      return [{
+        ...playlist,
+        folderId:
+          playlist.folderId && !deletedPlaylistFolderIds.includes(playlist.folderId)
+            ? playlist.folderId
+            : null,
+      }];
+    });
+}
+
+function mergePlaylistFolderUpdates(
+  baseFolders: PlaylistFolder[],
+  updatedFolders: PlaylistFolder[],
+  deletedPlaylistFolderIds: string[]
+) {
+  return uniqueValues([
+    ...baseFolders.map((folder) => folder.id),
+    ...updatedFolders.map((folder) => folder.id),
+  ])
+    .filter((folderId) => !deletedPlaylistFolderIds.includes(folderId))
+    .flatMap((folderId): PlaylistFolder[] => {
+      const folder =
+        updatedFolders.find((currentFolder) => currentFolder.id === folderId) ||
+        baseFolders.find((currentFolder) => currentFolder.id === folderId);
+
+      return folder ? [folder] : [];
+    });
+}
+
+async function downloadSyncedUserPreferences(
+  supabase: SupabaseClient,
+  userId: string
+) {
+  const { data, error } = await supabase.storage
+    .from(SYNC_BUCKET)
+    .download(syncedPreferencesPath(userId));
+
+  if (error || !data) {
+    return null;
+  }
+
+  try {
+    return normalizePreferences(JSON.parse(await data.text()));
+  } catch {
+    return null;
+  }
+}
+
 export function getUserProfilePreferences(userId: string) {
   return {
     ...defaultProfile,
@@ -392,13 +456,10 @@ export async function loadSyncedUserPreferences(
   userId: string
 ) {
   const localPreferences = localUserPreferences(userId);
-  const { data, error } = await supabase.storage
-    .from(SYNC_BUCKET)
-    .download(syncedPreferencesPath(userId));
+  const remotePreferences = await downloadSyncedUserPreferences(supabase, userId);
 
-  if (!error && data) {
+  if (remotePreferences) {
     try {
-      const remotePreferences = normalizePreferences(JSON.parse(await data.text()));
       const mergedPreferences = mergePreferences(localPreferences, remotePreferences);
 
       writeLocalUserPreferences(userId, mergedPreferences);
@@ -439,18 +500,41 @@ export async function saveSyncedUserPreferences(
   value: Partial<SyncedUserPreferences>
 ) {
   const currentPreferences = localUserPreferences(userId);
+  const remotePreferences = await downloadSyncedUserPreferences(supabase, userId);
+  const basePreferences = remotePreferences
+    ? mergePreferences(currentPreferences, remotePreferences)
+    : currentPreferences;
+  const deletedPlaylistIds = uniqueValues([
+    ...basePreferences.deletedPlaylistIds,
+    ...(value.deletedPlaylistIds || []),
+  ]);
+  const deletedPlaylistFolderIds = uniqueValues([
+    ...basePreferences.deletedPlaylistFolderIds,
+    ...(value.deletedPlaylistFolderIds || []),
+  ]);
+  const playlists = Array.isArray(value.playlists)
+    ? mergePlaylistUpdates(
+        basePreferences.playlists,
+        value.playlists,
+        deletedPlaylistIds,
+        deletedPlaylistFolderIds
+      )
+    : basePreferences.playlists;
+  const playlistFolders = Array.isArray(value.playlistFolders)
+    ? mergePlaylistFolderUpdates(
+        basePreferences.playlistFolders,
+        value.playlistFolders,
+        deletedPlaylistFolderIds
+      )
+    : basePreferences.playlistFolders;
   const preferences = normalizePreferences({
-    ...currentPreferences,
+    ...basePreferences,
     ...value,
+    playlists,
+    playlistFolders,
     updatedAt: new Date().toISOString(),
-    deletedPlaylistIds: uniqueValues([
-      ...currentPreferences.deletedPlaylistIds,
-      ...(value.deletedPlaylistIds || []),
-    ]),
-    deletedPlaylistFolderIds: uniqueValues([
-      ...currentPreferences.deletedPlaylistFolderIds,
-      ...(value.deletedPlaylistFolderIds || []),
-    ]),
+    deletedPlaylistIds,
+    deletedPlaylistFolderIds,
   });
   const payload = JSON.stringify(preferences);
 
