@@ -289,6 +289,7 @@ export default function LibraryScreen({ playlistId }: Props) {
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const offlineObjectUrlsRef = useRef<string[]>([]);
   const isLoadingDataRef = useRef(false);
+  const pendingPlaylistCoversRef = useRef<Record<string, string>>({});
 
   const allTracksPlaylist = useMemo<Playlist>(
     () => ({
@@ -453,12 +454,13 @@ export default function LibraryScreen({ playlistId }: Props) {
     const currentPlaylist = playlistId
       ? preferences.playlists.find((playlist) => playlist.id === playlistId)
       : null;
+    const pendingCoverUrl = playlistId ? pendingPlaylistCoversRef.current[playlistId] : null;
 
     setTrackMetadataById(preferences.trackMetadata);
     setProfile(preferences.profile);
     setPlaylistsState(preferences.playlists);
     setPlaylistFoldersState(preferences.playlistFolders);
-    setPlaylistCoverUrl(currentPlaylist?.coverDataUrl || null);
+    setPlaylistCoverUrl(pendingCoverUrl || currentPlaylist?.coverDataUrl || null);
   }, [playlistId]);
 
   function persistSyncedPreferences(
@@ -1073,10 +1075,13 @@ export default function LibraryScreen({ playlistId }: Props) {
           ? { ...playlist, coverDataUrl: dataUrl }
           : playlist
       );
+      const coverSizeKb = Math.max(1, Math.round(dataUrl.length / 1024));
 
+      pendingPlaylistCoversRef.current[activePlaylist.id] = dataUrl;
       setPlaylistCoverUrl(dataUrl);
-      await persistPlaylists(nextPlaylists, "Cover updated and synced.");
+      await persistPlaylists(nextPlaylists, `Cover updated and synced (${coverSizeKb} KB).`);
     } catch (error) {
+      delete pendingPlaylistCoversRef.current[activePlaylist.id];
       setStatus(error instanceof Error ? error.message : "Could not update cover art.");
     } finally {
       if (coverInputRef.current) coverInputRef.current.value = "";
