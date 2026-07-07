@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
@@ -230,6 +230,7 @@ export default function LibraryScreen({ playlistId }: Props) {
   const [draggedPlaylistId, setDraggedPlaylistId] = useState<string | null>(null);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
+  const [lastSelectedTrackId, setLastSelectedTrackId] = useState<string | null>(null);
   const [isDeletingTracks, setIsDeletingTracks] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
@@ -350,14 +351,6 @@ export default function LibraryScreen({ playlistId }: Props) {
     () => new Set(selectedTrackIdsInLibrary),
     [selectedTrackIdsInLibrary]
   );
-
-  const selectedVisibleTrackIds = useMemo(
-    () => visibleTracks.map((track) => track.id).filter((trackId) => selectedTrackIdSet.has(trackId)),
-    [selectedTrackIdSet, visibleTracks]
-  );
-
-  const allVisibleTracksSelected =
-    visibleTracks.length > 0 && selectedVisibleTrackIds.length === visibleTracks.length;
 
   const displayName = profile.username.trim() || user?.email || "Music Locker";
 
@@ -552,26 +545,33 @@ export default function LibraryScreen({ playlistId }: Props) {
     };
   }, [loadData]);
 
-  function toggleTrackSelection(trackId: string) {
-    setSelectedTrackIds((currentIds) =>
-      currentIds.includes(trackId)
-        ? currentIds.filter((currentTrackId) => currentTrackId !== trackId)
-        : [...currentIds, trackId]
-    );
-  }
+  function handleTrackClick(event: MouseEvent, trackId: string, index: number) {
+    if (event.shiftKey) {
+      event.preventDefault();
+      const anchorIndex = lastSelectedTrackId
+        ? visibleTracks.findIndex((track) => track.id === lastSelectedTrackId)
+        : -1;
+      const startIndex = anchorIndex >= 0 ? Math.min(anchorIndex, index) : index;
+      const endIndex = anchorIndex >= 0 ? Math.max(anchorIndex, index) : index;
+      const rangeTrackIds = visibleTracks.slice(startIndex, endIndex + 1).map((track) => track.id);
 
-  function toggleVisibleTrackSelection() {
-    if (allVisibleTracksSelected) {
-      const visibleTrackIds = new Set(visibleTracks.map((track) => track.id));
-      setSelectedTrackIds((currentIds) => currentIds.filter((trackId) => !visibleTrackIds.has(trackId)));
+      setSelectedTrackIds((currentIds) => Array.from(new Set([...currentIds, ...rangeTrackIds])));
+      setLastSelectedTrackId(trackId);
       return;
     }
 
-    setSelectedTrackIds((currentIds) => {
-      const nextTrackIds = new Set(currentIds);
-      visibleTracks.forEach((track) => nextTrackIds.add(track.id));
-      return Array.from(nextTrackIds);
-    });
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      setSelectedTrackIds((currentIds) =>
+        currentIds.includes(trackId)
+          ? currentIds.filter((currentTrackId) => currentTrackId !== trackId)
+          : [...currentIds, trackId]
+      );
+      setLastSelectedTrackId(trackId);
+      return;
+    }
+
+    playTrackAtIndex(index);
   }
 
   async function deleteTracks(trackIds: string[]) {
@@ -646,6 +646,7 @@ export default function LibraryScreen({ playlistId }: Props) {
     setPlaylistsState(nextPlaylists);
     setTrackMetadataById(nextTrackMetadata);
     setSelectedTrackIds((currentIds) => currentIds.filter((trackId) => !deletedTrackIdSet.has(trackId)));
+    setLastSelectedTrackId((trackId) => (trackId && deletedTrackIdSet.has(trackId) ? null : trackId));
     setOpenTrackMenuId(null);
     await persistSyncedPreferences(
       { playlists: nextPlaylists, trackMetadata: nextTrackMetadata },
@@ -1498,26 +1499,21 @@ export default function LibraryScreen({ playlistId }: Props) {
               </div>
 
               <div>
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <label className="flex items-center gap-2 text-xs text-[var(--app-muted)]">
-                    <input
-                      type="checkbox"
-                      checked={allVisibleTracksSelected}
-                      onChange={toggleVisibleTrackSelection}
-                      disabled={visibleTracks.length === 0}
-                      className="h-4 w-4 accent-white disabled:opacity-40"
-                    />
-                    Select visible
-                  </label>
-
-                  {selectedTrackIdsInLibrary.length > 0 ? (
+                {selectedTrackIdsInLibrary.length > 0 ? (
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-[var(--app-muted)]">
+                      {selectedTrackIdsInLibrary.length} selected
+                    </p>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => setSelectedTrackIds([])}
+                        onClick={() => {
+                          setSelectedTrackIds([]);
+                          setLastSelectedTrackId(null);
+                        }}
                         className="rounded-full border border-[var(--app-border)] px-3 py-1.5 text-xs text-[var(--app-muted)] hover:text-white"
                       >
-                        Clear {selectedTrackIdsInLibrary.length}
+                        Clear
                       </button>
                       <button
                         type="button"
@@ -1528,8 +1524,8 @@ export default function LibraryScreen({ playlistId }: Props) {
                         {isDeletingTracks ? "Deleting..." : `Delete ${selectedTrackIdsInLibrary.length}`}
                       </button>
                     </div>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
 
                 <input
                   type="text"
@@ -1545,6 +1541,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                   const displayArtist = trackMetadataById[track.id]?.artist || track.artist || "Unknown artist";
                   const trackDate = formatTrackDate(track.created_at);
                   const isCurrentTrack = currentTrackId === track.id;
+                  const isSelected = selectedTrackIdSet.has(track.id);
 
                   return (
                     <div
@@ -1554,23 +1551,17 @@ export default function LibraryScreen({ playlistId }: Props) {
                         onDragOver={(event) => event.preventDefault()}
                         onDrop={() => reorderTrack(track.id)}
                         onDragEnd={() => setDraggedTrackId(null)}
-                      className={`group relative grid grid-cols-[2rem_2.5rem_1fr_auto] items-center gap-3 rounded-xl px-2 py-3 ${
+                      className={`group relative grid grid-cols-[2.5rem_1fr_auto] items-center gap-3 rounded-xl px-2 py-3 ${
                         draggedTrackId === track.id ? "opacity-45" : ""
                       } ${
                         isCurrentTrack ? "bg-green-500/10 text-green-300" : ""
+                      } ${
+                        isSelected ? "bg-white/[0.08]" : ""
                       }`}
                     >
-                      <input
-                        type="checkbox"
-                        checked={selectedTrackIdSet.has(track.id)}
-                        onChange={() => toggleTrackSelection(track.id)}
-                        onClick={(event) => event.stopPropagation()}
-                        className="h-4 w-4 justify-self-center accent-white"
-                        aria-label={`Select ${displayTitle}`}
-                      />
                       <button
                           type="button"
-                          onClick={() => playTrackAtIndex(index)}
+                          onClick={(event) => handleTrackClick(event, track.id, index)}
                           disabled={renamingTrackId === track.id}
                         className={`text-right text-sm group-hover:text-white disabled:cursor-default ${
                           isCurrentTrack ? "text-green-300" : "text-[var(--app-muted)]"
@@ -1608,7 +1599,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                               </button>
                             </div>
                           ) : (
-                          <button type="button" onClick={() => playTrackAtIndex(index)} className="block w-full text-left">
+                          <button type="button" onClick={(event) => handleTrackClick(event, track.id, index)} className="block w-full text-left">
                             <span className="flex min-w-0 items-center gap-2">
                               <span className={`truncate text-sm font-semibold ${
                                 isCurrentTrack ? "text-green-300" : "text-white"
