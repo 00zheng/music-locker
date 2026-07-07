@@ -16,6 +16,8 @@ type PlayerRequest = {
 };
 
 const PLAY_EVENT = "music-locker:play-track";
+const APPEND_EVENT = "music-locker:append-track-queue";
+export const CURRENT_TRACK_EVENT = "music-locker:current-track";
 
 function formatTime(value: number) {
   const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
@@ -105,17 +107,38 @@ export function dispatchPlayQueue(tracks: PlayerTrack[], startIndex: number) {
   }));
 }
 
+export function dispatchAppendQueue(tracks: PlayerTrack[]) {
+  if (tracks.length === 0) {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent<Pick<PlayerRequest, "tracks">>(APPEND_EVENT, {
+    detail: {
+      tracks,
+    },
+  }));
+}
+
+function dispatchCurrentTrack(trackId: string | null) {
+  window.dispatchEvent(
+    new CustomEvent(CURRENT_TRACK_EVENT, {
+      detail: { trackId },
+    })
+  );
+}
+
 export default function PlayerBridge() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastProgressRenderAtRef = useRef(0);
   const [queue, setQueue] = useState<PlayerTrack[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
+  const [isControlsOpen, setIsControlsOpen] = useState(false);
   const [isShuffleOn, setIsShuffleOn] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.9);
-  const [playbackRate, setPlaybackRate] = useState(1);
   const track = queue[queueIndex] || null;
 
   useEffect(() => {
@@ -125,11 +148,32 @@ export default function PlayerBridge() {
       setQueueIndex(customEvent.detail.startIndex);
       setCurrentTime(0);
       setDuration(0);
+      lastProgressRenderAtRef.current = 0;
       setIsPlaying(true);
     }
 
     window.addEventListener(PLAY_EVENT, handlePlay as EventListener);
     return () => window.removeEventListener(PLAY_EVENT, handlePlay as EventListener);
+  }, []);
+
+  useEffect(() => {
+    function handleAppend(event: Event) {
+      const customEvent = event as CustomEvent<Pick<PlayerRequest, "tracks">>;
+      setQueue((currentQueue) => {
+        if (currentQueue.length === 0) {
+          setQueueIndex(0);
+          setCurrentTime(0);
+          setDuration(0);
+          lastProgressRenderAtRef.current = 0;
+          setIsPlaying(true);
+        }
+
+        return [...currentQueue, ...customEvent.detail.tracks];
+      });
+    }
+
+    window.addEventListener(APPEND_EVENT, handleAppend as EventListener);
+    return () => window.removeEventListener(APPEND_EVENT, handleAppend as EventListener);
   }, []);
 
   useEffect(() => {
@@ -145,22 +189,14 @@ export default function PlayerBridge() {
   useEffect(() => {
     const audio = audioRef.current;
 
-    if (!audio) {
-      return;
-    }
-
-    audio.playbackRate = playbackRate;
-  }, [playbackRate]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-
     if (!audio || !track) {
       return;
     }
 
     audio.src = track.audioUrl;
     audio.currentTime = 0;
+    lastProgressRenderAtRef.current = 0;
+    dispatchCurrentTrack(track.id);
 
     const promise = audio.play();
     if (promise) {
@@ -236,15 +272,27 @@ export default function PlayerBridge() {
     }
 
     setIsPlaying(false);
+    dispatchCurrentTrack(null);
   }
 
   return (
     <>
       <audio
         ref={audioRef}
+        preload="metadata"
         onTimeUpdate={() => {
           const audio = audioRef.current;
           if (!audio) return;
+          const now = performance.now();
+          const shouldRenderProgress =
+            now - lastProgressRenderAtRef.current > 250 ||
+            Math.abs((duration || 0) - audio.currentTime) < 0.25;
+
+          if (!shouldRenderProgress) {
+            return;
+          }
+
+          lastProgressRenderAtRef.current = now;
           setCurrentTime(audio.currentTime);
         }}
         onLoadedMetadata={() => {
@@ -259,7 +307,7 @@ export default function PlayerBridge() {
       {track ? (
       <div className="fixed inset-x-0 bottom-5 z-50 px-4">
         {track && isQueueOpen ? (
-          <div className="mx-auto mb-3 max-h-72 max-w-4xl overflow-hidden rounded-2xl border border-white/[0.08] bg-[#1b1b1b]/95 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur">
+          <div className="mx-auto mb-3 max-h-72 max-w-4xl overflow-hidden rounded-2xl border border-white/[0.08] bg-[rgba(27,27,27,0.72)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
             <div className="flex items-center justify-between border-b border-white/[0.08] px-4 py-3">
               <p className="text-sm font-semibold text-white">Queue</p>
               <p className="text-xs text-[var(--app-muted)]">{queueIndex + 1} / {queue.length}</p>
@@ -276,7 +324,7 @@ export default function PlayerBridge() {
                     setIsPlaying(true);
                   }}
                   className={`block w-full px-4 py-2 text-left text-sm hover:bg-white/[0.08] ${
-                    index === queueIndex ? "text-white" : "text-[var(--app-muted)]"
+                    index === queueIndex ? "bg-green-500/10 text-green-300" : "text-[var(--app-muted)]"
                   }`}
                 >
                   <span className="mr-3 font-mono text-xs">{index + 1}</span>
@@ -287,14 +335,52 @@ export default function PlayerBridge() {
           </div>
         ) : null}
 
-        <div className="mx-auto flex max-w-5xl items-center gap-2 rounded-full border border-white/[0.08] bg-[#242424]/95 px-2 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur sm:gap-3 sm:px-3">
+        {isControlsOpen ? (
+          <div className="mx-auto mb-3 flex max-w-sm items-center justify-between gap-2 rounded-2xl border border-white/[0.08] bg-[rgba(27,27,27,0.72)] px-3 py-3 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:hidden">
+            <button
+              type="button"
+              onClick={() => setIsShuffleOn((current) => !current)}
+              aria-label="Shuffle"
+              title="Shuffle"
+              className={`flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/[0.08] ${
+                isShuffleOn ? "text-white" : "text-[var(--app-muted)]"
+              }`}
+            >
+              <PlayerIcon name="shuffle" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsQueueOpen((current) => !current)}
+              aria-label="Queue"
+              title="Queue"
+              className="flex h-10 w-10 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08]"
+            >
+              <PlayerIcon name="queue" />
+            </button>
+            <label className="flex min-w-0 flex-1 items-center gap-2 text-white">
+              <PlayerIcon name="volume" />
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={volume}
+                onChange={(event) => setVolume(Number(event.target.value))}
+                className="min-w-0 flex-1 accent-white"
+                aria-label="Volume"
+              />
+            </label>
+          </div>
+        ) : null}
+
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-2 rounded-2xl border border-white/[0.08] bg-[rgba(36,36,36,0.72)] px-2 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:flex-nowrap sm:gap-3 sm:rounded-full sm:px-3">
             <>
               <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
                 {track.coverDataUrl ? (
                   /* eslint-disable-next-line @next/next/no-img-element */
                   <img src={track.coverDataUrl} alt="cover" className="h-10 w-10 rounded-full object-cover sm:h-11 sm:w-11" />
                 ) : (
-                  <div className="h-10 w-10 rounded-full border border-[var(--app-border)] bg-[#151515] sm:h-11 sm:w-11" />
+                  <div className="h-10 w-10 rounded-full border border-[var(--app-border)] bg-[var(--app-glass)] sm:h-11 sm:w-11" />
                 )}
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-[var(--app-text)]">{track.title}</p>
@@ -314,7 +400,7 @@ export default function PlayerBridge() {
                   setCurrentTime(nextValue);
                   if (audio) audio.currentTime = nextValue;
                 }}
-                className="hidden h-1 flex-[1.3] accent-white sm:block"
+                className="order-last h-1 w-full accent-white sm:order-none sm:block sm:flex-[1.3]"
               />
 
               <div className="hidden items-center gap-2 font-mono text-xs text-white sm:flex">
@@ -361,7 +447,7 @@ export default function PlayerBridge() {
                   onClick={() => setIsShuffleOn((current) => !current)}
                   aria-label="Shuffle"
                   title="Shuffle"
-                  className={`flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/[0.08] sm:h-10 sm:w-10 ${
+                  className={`hidden h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/[0.08] sm:flex sm:h-10 sm:w-10 ${
                     isShuffleOn ? "text-white" : "text-[var(--app-muted)]"
                   }`}
                 >
@@ -373,28 +459,22 @@ export default function PlayerBridge() {
                   onClick={() => setIsQueueOpen((current) => !current)}
                   aria-label="Queue"
                   title="Queue"
-                  className="flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] sm:h-10 sm:w-10"
+                  className="hidden h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] sm:flex sm:h-10 sm:w-10"
                 >
                   <PlayerIcon name="queue" />
                 </button>
 
-                <label className="flex h-9 w-14 items-center rounded-full border border-white/[0.08] px-1.5 text-xs text-white">
-                  <select
-                    value={playbackRate}
-                    onChange={(event) => setPlaybackRate(Number(event.target.value))}
-                    className="w-full bg-transparent text-xs outline-none"
-                    aria-label="Playback speed"
-                    title="Playback speed"
-                  >
-                    {[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => (
-                      <option key={speed} value={speed} className="bg-[#1b1b1b]">
-                        {speed}x
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <button
+                  type="button"
+                  onClick={() => setIsControlsOpen((current) => !current)}
+                  aria-label="More player controls"
+                  title="More controls"
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] sm:hidden"
+                >
+                  <span aria-hidden="true" className="text-xl leading-none">...</span>
+                </button>
 
-                <div className="group relative">
+                <div className="group relative hidden sm:block">
                   <button
                     type="button"
                     className="flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] focus:bg-white/[0.08] sm:h-10 sm:w-10"
@@ -403,7 +483,7 @@ export default function PlayerBridge() {
                   >
                     <PlayerIcon name="volume" />
                   </button>
-                  <div className="pointer-events-none absolute bottom-11 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-full border border-white/[0.08] bg-[#1b1b1b]/95 px-3 py-4 opacity-0 shadow-[0_18px_50px_rgba(0,0,0,0.45)] transition group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+                  <div className="pointer-events-none absolute bottom-11 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-full border border-white/[0.08] bg-[rgba(27,27,27,0.78)] px-3 py-4 opacity-0 shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl transition group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
                     <input
                       type="range"
                       min={0}

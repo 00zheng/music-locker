@@ -1,20 +1,8 @@
 import type { Metadata } from "next";
-import { Sora, Space_Mono } from "next/font/google";
 import "./globals.css";
 import RegisterServiceWorker from "@/components/RegisterServiceWorker";
 import ThemeBoot from "@/components/ThemeBoot";
 import PlayerBridge from "@/components/PlayerBridge";
-
-const sora = Sora({
-  variable: "--font-sora",
-  subsets: ["latin"],
-});
-
-const spaceMono = Space_Mono({
-  variable: "--font-space-mono",
-  weight: ["400", "700"],
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "Music Locker",
@@ -27,10 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${sora.variable} ${spaceMono.variable} h-full antialiased`}
-    >
+    <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
         <RegisterServiceWorker />
         <ThemeBoot />

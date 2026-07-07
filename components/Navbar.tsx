@@ -2,23 +2,26 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Image from "next/image";
 import { supabase } from "@/lib/supabase";
 import {
+  USER_PREFERENCES_UPDATED_EVENT,
   loadSyncedUserPreferences,
   type Playlist,
   type TrackMetadataById,
 } from "@/lib/user-prefs";
+import { dispatchPlayQueue } from "@/components/PlayerBridge";
 import LogoutButton from "./LogoutButton";
 
 type SearchTrack = {
   id: string;
   title: string;
   artist: string | null;
+  storage_path: string | null;
 };
 
-type SearchResult = {
+type BaseSearchResult = {
   id: string;
   label: string;
   detail: string;
@@ -26,12 +29,31 @@ type SearchResult = {
   icon: "library" | "profile" | "settings" | "playlist" | "music";
 };
 
+type LinkSearchResult = BaseSearchResult & {
+  kind: "link";
+};
+
+type TrackSearchResult = BaseSearchResult & {
+  kind: "track";
+  artist: string;
+  coverDataUrl?: string | null;
+  storagePath?: string | null;
+  trackId: string;
+};
+
+type SearchResult = LinkSearchResult | TrackSearchResult;
+
+function normalizeSearchValue(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function NavIcon({
   name,
   className = "h-4 w-4",
 }: {
   name:
     | "bell"
+    | "back"
     | "close"
     | "library"
     | "music"
@@ -42,6 +64,12 @@ function NavIcon({
   className?: string;
 }) {
   const paths = {
+    back: (
+      <>
+        <path d="m15 18-6-6 6-6" />
+        <path d="M9 12h12" />
+      </>
+    ),
     bell: (
       <>
         <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
@@ -114,27 +142,34 @@ function NavIcon({
 }
 
 export default function Navbar() {
+  const router = useRouter();
   const pathname = usePathname();
   const [username, setUsername] = useState("");
   const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null);
   const [playlists, setPlaylistsState] = useState<Playlist[]>([]);
   const [trackMetadataById, setTrackMetadataById] = useState<TrackMetadataById>({});
   const [tracks, setTracks] = useState<SearchTrack[]>([]);
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
+    let isMounted = true;
+
     async function loadNavbarData() {
       const { data } = await supabase.auth.getSession();
       const userId = data.session?.user?.id;
 
-      if (!userId) {
+      if (!userId || !isMounted) {
         return;
       }
 
       const { preferences } = await loadSyncedUserPreferences(supabase, userId);
+
+      if (!isMounted) {
+        return;
+      }
+
       setUsername(preferences.profile.username || "");
       setAvatarDataUrl(preferences.profile.avatarDataUrl || null);
       setPlaylistsState(preferences.playlists);
@@ -142,20 +177,23 @@ export default function Navbar() {
 
       const { data: trackData } = await supabase
         .from("tracks")
-        .select("id,title,artist")
+        .select("id,title,artist,storage_path")
         .eq("user_id", userId)
         .order("created_at", { ascending: false });
 
-      setTracks((trackData || []) as SearchTrack[]);
+      if (isMounted) {
+        setTracks((trackData || []) as SearchTrack[]);
+      }
     }
 
     void loadNavbarData();
-    window.addEventListener("music-locker:profile-updated", loadNavbarData);
+    window.addEventListener(USER_PREFERENCES_UPDATED_EVENT, loadNavbarData);
 
     return () => {
-      window.removeEventListener("music-locker:profile-updated", loadNavbarData);
+      isMounted = false;
+      window.removeEventListener(USER_PREFERENCES_UPDATED_EVENT, loadNavbarData);
     };
-  }, [pathname]);
+  }, []);
 
   const searchResults = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -166,13 +204,15 @@ export default function Navbar() {
         detail: "Playlists and folders",
         href: "/library",
         icon: "library",
+        kind: "link",
       },
       {
         id: "route-profile",
-        label: "Profile",
-        detail: "Name, avatar, storage, password",
-        href: "/profile",
+        label: "Account",
+        detail: "Profile, storage, password, display",
+        href: "/settings",
         icon: "profile",
+        kind: "link",
       },
       {
         id: "route-settings",
@@ -180,30 +220,46 @@ export default function Navbar() {
         detail: "Theme and app preferences",
         href: "/settings",
         icon: "settings",
+        kind: "link",
       },
     ];
 
-    const playlistResults = playlists.map((playlist) => ({
+    const playlistResults: SearchResult[] = playlists.map((playlist) => ({
       id: `playlist-${playlist.id}`,
       label: playlist.name,
       detail: `${playlist.trackIds.length} track${playlist.trackIds.length === 1 ? "" : "s"}`,
       href: `/library/${playlist.id}`,
       icon: "playlist" as const,
+      kind: "link" as const,
     }));
 
-    const trackResults = tracks.map((track) => {
+    const seenTrackResults = new Set<string>();
+    const trackResults: SearchResult[] = [];
+
+    tracks.forEach((track) => {
       const parentPlaylist = playlists.find((playlist) => playlist.trackIds.includes(track.id));
       const metadata = trackMetadataById[track.id];
       const title = metadata?.title || track.title;
       const artist = metadata?.artist || track.artist || "Unknown artist";
+      const resultKey = `${normalizeSearchValue(title)}:${normalizeSearchValue(artist)}`;
 
-      return {
+      if (seenTrackResults.has(resultKey)) {
+        return;
+      }
+
+      seenTrackResults.add(resultKey);
+      trackResults.push({
         id: `track-${track.id}`,
         label: title,
         detail: artist,
         href: parentPlaylist ? `/library/${parentPlaylist.id}` : "/library",
         icon: "music" as const,
-      };
+        kind: "track" as const,
+        artist,
+        coverDataUrl: metadata?.coverDataUrl || parentPlaylist?.coverDataUrl || null,
+        storagePath: track.storage_path,
+        trackId: track.id,
+      });
     });
 
     const results = [...staticResults, ...playlistResults, ...trackResults];
@@ -217,57 +273,93 @@ export default function Navbar() {
       .slice(0, 12);
   }, [playlists, searchQuery, trackMetadataById, tracks]);
 
-  const linkClass = (href: string) =>
-    pathname === href
-      ? "font-medium text-[var(--app-text)]"
-      : "text-[var(--app-muted)] hover:text-[var(--app-text)]";
+  async function playSearchTrack(result: TrackSearchResult) {
+    setIsSearchOpen(false);
+    setSearchQuery("");
+
+    let storagePath = result.storagePath?.trim();
+
+    if (!storagePath) {
+      const { data: trackData } = await supabase
+        .from("tracks")
+        .select("storage_path")
+        .eq("id", result.trackId)
+        .single();
+
+      storagePath = typeof trackData?.storage_path === "string" ? trackData.storage_path.trim() : "";
+    }
+
+    if (!storagePath) {
+      router.push(result.href);
+      return;
+    }
+
+    const { data, error } = await supabase.storage
+      .from("music")
+      .createSignedUrl(storagePath, 60 * 60);
+
+    if (error || !data?.signedUrl) {
+      router.push(result.href);
+      return;
+    }
+
+    dispatchPlayQueue(
+      [
+        {
+          id: result.trackId,
+          title: result.label,
+          artist: result.artist,
+          coverDataUrl: result.coverDataUrl || null,
+          audioUrl: data.signedUrl,
+        },
+      ],
+      0
+    );
+    router.push(result.href);
+  }
 
   return (
-    <nav className="w-full border-b border-[var(--app-border)] bg-[#0d0d0d]">
+    <>
+    <nav className="relative z-[100] w-full border-b border-[var(--app-border)] bg-[rgba(12,12,12,0.52)] backdrop-blur-xl">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-        <Link href="/library" className="text-lg font-semibold tracking-tight text-[var(--app-text)]">
-          music-locker
-        </Link>
-
-        <div className="hidden items-center gap-4 text-sm md:flex">
-          <Link href="/library" className={linkClass("/library")}>
-            Library
-          </Link>
-
-          <Link href="/profile" className={linkClass("/profile")}>
-            Profile
-          </Link>
-
-          <Link href="/settings" className={linkClass("/settings")}>
-            Settings
+        <div className="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.08] text-white transition hover:bg-white/[0.12] sm:hidden"
+            aria-label="Back"
+            title="Back"
+          >
+            <NavIcon name="back" />
+          </button>
+          <Link href="/library" className="truncate text-lg font-semibold tracking-tight text-[var(--app-text)]">
+            music-locker
           </Link>
         </div>
 
         <div className="relative flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setIsNotificationsOpen((current) => !current);
-              setIsProfileMenuOpen(false);
-              setIsSearchOpen(false);
-            }}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.08] text-white transition hover:bg-white/[0.12]"
-            aria-label="Notifications"
-            title="Notifications"
+          <Link
+            href="/library"
+            className={`flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.08] transition hover:bg-white/[0.12] ${
+              pathname === "/library" ? "text-white" : "text-[var(--app-muted)]"
+            }`}
+            aria-label="Library"
+            title="Library"
           >
-            <NavIcon name="bell" />
-          </button>
+            <NavIcon name="library" />
+          </Link>
 
           <button
             type="button"
             onClick={() => {
               setIsProfileMenuOpen((current) => !current);
-              setIsNotificationsOpen(false);
               setIsSearchOpen(false);
             }}
-            className="flex h-11 min-w-11 items-center justify-center gap-2 rounded-full bg-white/[0.08] px-3 text-white transition hover:bg-white/[0.12]"
-            aria-label="Profile menu"
-            title="Profile"
+            className={`flex h-11 w-11 items-center justify-center overflow-hidden rounded-full bg-white/[0.08] transition hover:bg-white/[0.12] ${
+              pathname === "/settings" ? "text-white" : "text-[var(--app-muted)]"
+            }`}
+            aria-label="Account menu"
+            title="Account"
           >
             {avatarDataUrl ? (
               <Image
@@ -276,19 +368,17 @@ export default function Navbar() {
                 width={44}
                 height={44}
                 unoptimized
-                className="h-7 w-7 rounded-full object-cover"
+                className="h-full w-full object-cover"
               />
             ) : (
               <NavIcon name="profile" />
             )}
-            <span className="hidden text-sm font-medium sm:inline">Profile</span>
           </button>
 
           <button
             type="button"
             onClick={() => {
               setIsSearchOpen(true);
-              setIsNotificationsOpen(false);
               setIsProfileMenuOpen(false);
             }}
             className="flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.08] text-white transition hover:bg-white/[0.12]"
@@ -298,31 +388,19 @@ export default function Navbar() {
             <NavIcon name="search" />
           </button>
 
-          {isNotificationsOpen ? (
-            <div className="absolute right-0 top-14 z-50 w-72 rounded-2xl border border-[var(--app-border)] bg-[#181818] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
-              <p className="text-sm font-semibold text-white">Notifications</p>
-              <div className="mt-3 rounded-xl bg-white/[0.05] p-3">
-                <p className="text-sm text-[var(--app-text)]">No new notifications.</p>
-                <p className="mt-1 text-xs text-[var(--app-muted)]">
-                  Offline downloads stay playable after they are saved.
-                </p>
-              </div>
-            </div>
-          ) : null}
-
           {isProfileMenuOpen ? (
-            <div className="absolute right-0 top-14 z-50 w-64 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[#181818] shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
+              <div className="absolute right-0 top-14 z-[110] w-64 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.74)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
               <div className="border-b border-white/[0.08] px-4 py-3">
                 <p className="truncate text-sm font-semibold text-white">{username || "Profile"}</p>
                 <p className="truncate text-xs text-[var(--app-muted)]">Account</p>
               </div>
-              <Link href="/profile" className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--app-text)] hover:bg-white/[0.08]">
+              <Link
+                href="/settings"
+                onClick={() => setIsProfileMenuOpen(false)}
+                className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--app-text)] hover:bg-white/[0.08]"
+              >
                 <NavIcon name="profile" />
-                Profile
-              </Link>
-              <Link href="/settings" className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--app-text)] hover:bg-white/[0.08]">
-                <NavIcon name="settings" />
-                Settings
+                Account settings
               </Link>
               <div className="border-t border-white/[0.08] p-3">
                 <LogoutButton />
@@ -332,15 +410,17 @@ export default function Navbar() {
         </div>
       </div>
 
-      {isSearchOpen ? (
-        <div className="fixed inset-0 z-[80] bg-black/70 px-4 py-5 backdrop-blur-sm sm:py-12">
+    </nav>
+
+    {isSearchOpen ? (
+        <div className="fixed inset-0 z-[200] bg-black/70 px-4 py-5 backdrop-blur-sm sm:py-12">
           <button
             type="button"
             className="absolute inset-0 cursor-default"
             aria-label="Close search"
             onClick={() => setIsSearchOpen(false)}
           />
-          <div className="relative mx-auto max-w-2xl overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[#161616] shadow-[0_24px_90px_rgba(0,0,0,0.55)]">
+          <div className="relative mx-auto max-w-2xl overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[rgba(22,22,22,0.78)] shadow-[0_24px_90px_rgba(0,0,0,0.55)] backdrop-blur-xl">
             <div className="flex items-center gap-3 border-b border-white/[0.08] px-4 py-3">
               <NavIcon name="search" className="h-5 w-5 text-[var(--app-muted)]" />
               <input
@@ -362,21 +442,39 @@ export default function Navbar() {
             </div>
 
             <div className="max-h-[65vh] overflow-y-auto p-2">
-              {searchResults.map((result) => (
-                <Link
-                  key={result.id}
-                  href={result.href}
-                  className="flex items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-white/[0.08]"
-                >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-white">
-                    <NavIcon name={result.icon} />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-white">{result.label}</span>
-                    <span className="block truncate text-xs text-[var(--app-muted)]">{result.detail}</span>
-                  </span>
-                </Link>
-              ))}
+              {searchResults.map((result) =>
+                result.kind === "track" ? (
+                  <button
+                    key={result.id}
+                    type="button"
+                    onClick={() => void playSearchTrack(result)}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-white/[0.08]"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-white">
+                      <NavIcon name={result.icon} />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-white">{result.label}</span>
+                      <span className="block truncate text-xs text-[var(--app-muted)]">{result.detail}</span>
+                    </span>
+                  </button>
+                ) : (
+                  <Link
+                    key={result.id}
+                    href={result.href}
+                    onClick={() => setIsSearchOpen(false)}
+                    className="flex items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-white/[0.08]"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-white">
+                      <NavIcon name={result.icon} />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-white">{result.label}</span>
+                      <span className="block truncate text-xs text-[var(--app-muted)]">{result.detail}</span>
+                    </span>
+                  </Link>
+                )
+              )}
 
               {searchResults.length === 0 ? (
                 <div className="px-3 py-8 text-center text-sm text-[var(--app-muted)]">
@@ -387,6 +485,6 @@ export default function Navbar() {
           </div>
         </div>
       ) : null}
-    </nav>
+    </>
   );
 }

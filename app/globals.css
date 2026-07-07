@@ -1,17 +1,22 @@
 @import "tailwindcss";
 
 :root {
+  --font-sora: "Segoe UI", Arial, sans-serif;
+  --font-space-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --app-bg: #0b0b0b;
-  --app-bg-soft: #111111;
+  --app-bg-soft: rgba(20, 20, 20, 0.62);
   --app-text: #ededed;
   --app-muted: #9b9b9b;
   --app-border: rgba(255, 255, 255, 0.12);
   --app-accent: #bdbdbd;
   --app-accent-strong: #d8d8d8;
   --app-accent-ink: #0b0b0b;
-  --app-gradient: linear-gradient(180deg, #111111 0%, #0b0b0b 100%);
+  --app-glass: rgba(255, 255, 255, 0.065);
+  --app-glass-strong: rgba(255, 255, 255, 0.105);
+  --app-gradient: linear-gradient(180deg, #151515 0%, #080808 100%);
   --card-radius: 14px;
   --density-gap: 1rem;
+  --app-content-max: 64rem;
 }
 
 @theme inline {
@@ -21,19 +26,60 @@
   --font-mono: var(--font-space-mono);
 }
 
-html[data-theme="sunset"],
-html[data-theme="ocean"],
-html[data-theme="forest"],
 html[data-theme="nocturne"] {
   --app-bg: #0b0b0b;
-  --app-bg-soft: #111111;
+  --app-bg-soft: rgba(20, 20, 20, 0.62);
   --app-text: #ededed;
   --app-muted: #9b9b9b;
   --app-border: rgba(255, 255, 255, 0.12);
   --app-accent: #bdbdbd;
   --app-accent-strong: #d8d8d8;
   --app-accent-ink: #0b0b0b;
+  --app-glass: rgba(255, 255, 255, 0.065);
+  --app-glass-strong: rgba(255, 255, 255, 0.105);
   --app-gradient: linear-gradient(180deg, #111111 0%, #0b0b0b 100%);
+}
+
+html[data-theme="sunset"] {
+  --app-bg: #141414;
+  --app-bg-soft: rgba(48, 48, 48, 0.58);
+  --app-text: #f2f2f2;
+  --app-muted: #b8b8b8;
+  --app-border: rgba(255, 255, 255, 0.16);
+  --app-accent: #d5d5d5;
+  --app-accent-strong: #f0f0f0;
+  --app-accent-ink: #171717;
+  --app-glass: rgba(255, 255, 255, 0.09);
+  --app-glass-strong: rgba(255, 255, 255, 0.14);
+  --app-gradient: linear-gradient(180deg, #242424 0%, #101010 100%);
+}
+
+html[data-theme="ocean"] {
+  --app-bg: #071111;
+  --app-bg-soft: rgba(12, 37, 39, 0.58);
+  --app-text: #eefafa;
+  --app-muted: #94b5b6;
+  --app-border: rgba(169, 230, 232, 0.17);
+  --app-accent: #9ad9d7;
+  --app-accent-strong: #c2f1ef;
+  --app-accent-ink: #061312;
+  --app-glass: rgba(154, 217, 215, 0.09);
+  --app-glass-strong: rgba(154, 217, 215, 0.14);
+  --app-gradient: linear-gradient(180deg, #0d2223 0%, #061010 100%);
+}
+
+html[data-theme="forest"] {
+  --app-bg: #0b100c;
+  --app-bg-soft: rgba(20, 38, 24, 0.58);
+  --app-text: #f0f7f1;
+  --app-muted: #a1b5a4;
+  --app-border: rgba(186, 231, 194, 0.16);
+  --app-accent: #abd8b1;
+  --app-accent-strong: #d6f2da;
+  --app-accent-ink: #081109;
+  --app-glass: rgba(171, 216, 177, 0.09);
+  --app-glass-strong: rgba(171, 216, 177, 0.14);
+  --app-gradient: linear-gradient(180deg, #152319 0%, #080f09 100%);
 }
 
 html[data-card-round="off"] {
@@ -42,6 +88,14 @@ html[data-card-round="off"] {
 
 html[data-compact="on"] {
   --density-gap: 0.7rem;
+}
+
+html[data-content-width="compact"] {
+  --app-content-max: 48rem;
+}
+
+html[data-content-width="wide"] {
+  --app-content-max: 76rem;
 }
 
 body {
@@ -61,19 +115,23 @@ body {
   border-radius: var(--card-radius);
   border: 1px solid var(--app-border);
   background: var(--app-bg-soft);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
 }
 
 .app-chip {
   border-radius: 999px;
   border: 1px solid var(--app-border);
-  background: #141414;
+  background: var(--app-glass);
+  backdrop-filter: blur(14px);
 }
 
 .app-input {
   border-radius: 10px;
   border: 1px solid var(--app-border);
-  background: #0f0f0f;
+  background: rgba(10, 10, 10, 0.36);
   color: var(--app-text);
+  backdrop-filter: blur(14px);
 }
 
 .app-input:focus {
@@ -89,6 +147,7 @@ body {
   color: var(--app-accent-ink);
   font-weight: 600;
   transition: background 120ms ease;
+  backdrop-filter: blur(14px);
 }
 
 .app-button:hover {
@@ -97,6 +156,11 @@ body {
 
 .app-grid-gap {
   gap: var(--density-gap);
+}
+
+.app-content {
+  width: min(100%, var(--app-content-max));
+  margin-inline: auto;
 }
 
 @keyframes fade-up {

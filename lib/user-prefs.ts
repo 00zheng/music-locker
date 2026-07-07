@@ -6,6 +6,7 @@ export type AppThemePreferences = {
   themeId: ThemeId;
   roundedCards: boolean;
   compactMode: boolean;
+  contentWidth: "compact" | "default" | "wide";
 };
 
 export type UserProfilePreferences = {
@@ -53,17 +54,21 @@ export type SyncedUserPreferences = {
   playlistFolders: PlaylistFolder[];
 };
 
+export const USER_PREFERENCES_UPDATED_EVENT = "music-locker:user-preferences-updated";
+
 const PROFILE_PREFIX = "music-locker-profile:";
 const THEME_PREFIX = "music-locker-theme:";
 const TRACK_META_PREFIX = "music-locker-track-meta:";
 const PLAYLIST_PREFIX = "music-locker-playlists:";
 const PLAYLIST_FOLDER_PREFIX = "music-locker-playlist-folders:";
+const SYNC_PREFS_PREFIX = "music-locker-synced-prefs:";
 const SYNC_BUCKET = "music";
 
 const defaultTheme: AppThemePreferences = {
   themeId: "nocturne",
   roundedCards: true,
   compactMode: false,
+  contentWidth: "default",
 };
 
 const defaultProfile: UserProfilePreferences = {
@@ -118,6 +123,10 @@ function playlistFolderKey(userId: string) {
   return `${PLAYLIST_FOLDER_PREFIX}${userId}`;
 }
 
+function syncedLocalKey(userId: string) {
+  return `${SYNC_PREFS_PREFIX}${userId}`;
+}
+
 function syncedPreferencesPath(userId: string) {
   return `${userId}/.music-locker/preferences.json`;
 }
@@ -168,6 +177,15 @@ function hasMeaningfulPreferences(preferences: SyncedUserPreferences) {
 }
 
 function localUserPreferences(userId: string): SyncedUserPreferences {
+  const savedSyncedPreferences = readJson<SyncedUserPreferences | null>(
+    syncedLocalKey(userId),
+    null
+  );
+
+  if (savedSyncedPreferences) {
+    return normalizePreferences(savedSyncedPreferences);
+  }
+
   return normalizePreferences({
     updatedAt: new Date().toISOString(),
     profile: getUserProfilePreferences(userId),
@@ -179,6 +197,7 @@ function localUserPreferences(userId: string): SyncedUserPreferences {
 }
 
 function writeLocalUserPreferences(userId: string, preferences: SyncedUserPreferences) {
+  writeJson(syncedLocalKey(userId), preferences);
   setUserProfilePreferences(userId, preferences.profile);
   setAppThemePreferences(userId, preferences.theme);
   setTrackMetadata(userId, preferences.trackMetadata);
@@ -262,6 +281,22 @@ export async function loadSyncedUserPreferences(
   if (!error && data) {
     try {
       const remotePreferences = normalizePreferences(JSON.parse(await data.text()));
+      const localTimestamp = Date.parse(localPreferences.updatedAt);
+      const remoteTimestamp = Date.parse(remotePreferences.updatedAt);
+
+      if (
+        Number.isFinite(localTimestamp) &&
+        Number.isFinite(remoteTimestamp) &&
+        localTimestamp > remoteTimestamp &&
+        hasMeaningfulPreferences(localPreferences)
+      ) {
+        await saveSyncedUserPreferences(supabase, userId, localPreferences);
+        return {
+          preferences: localPreferences,
+          source: "local" as const,
+        };
+      }
+
       writeLocalUserPreferences(userId, remotePreferences);
       return {
         preferences: remotePreferences,
@@ -306,6 +341,10 @@ export async function saveSyncedUserPreferences(
       contentType: "application/json",
     });
 
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(USER_PREFERENCES_UPDATED_EVENT));
+  }
+
   return {
     preferences,
     error,
@@ -320,4 +359,5 @@ export function applyThemeToDocument(theme: AppThemePreferences) {
   document.documentElement.dataset.theme = theme.themeId;
   document.documentElement.dataset.cardRound = theme.roundedCards ? "on" : "off";
   document.documentElement.dataset.compact = theme.compactMode ? "on" : "off";
+  document.documentElement.dataset.contentWidth = theme.contentWidth || "default";
 }

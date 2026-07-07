@@ -15,8 +15,13 @@ import {
   type Playlist,
   type SyncedUserPreferences,
   type TrackMetadataById,
+  type UserProfilePreferences,
 } from "@/lib/user-prefs";
-import { dispatchPlayQueue } from "@/components/PlayerBridge";
+import {
+  CURRENT_TRACK_EVENT,
+  dispatchAppendQueue,
+  dispatchPlayQueue,
+} from "@/components/PlayerBridge";
 
 type Track = {
   id: string;
@@ -142,11 +147,23 @@ function formatTrackDate(value: string) {
   });
 }
 
+function formatFileSize(value: number | null) {
+  if (!value) {
+    return "Unknown size";
+  }
+
+  if (value < 1024 * 1024) {
+    return `${Math.max(1, Math.round(value / 1024))} KB`;
+  }
+
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function InlineIcon({
   name,
   className = "h-4 w-4",
 }: {
-  name: "play" | "folder";
+  name: "play" | "folder" | "add" | "back";
   className?: string;
 }) {
   return (
@@ -162,6 +179,16 @@ function InlineIcon({
     >
       {name === "play" ? (
         <path d="m8 5 11 7-11 7V5Z" />
+      ) : name === "back" ? (
+        <>
+          <path d="m15 18-6-6 6-6" />
+          <path d="M9 12h12" />
+        </>
+      ) : name === "add" ? (
+        <>
+          <path d="M12 5v14" />
+          <path d="M5 12h14" />
+        </>
       ) : (
         <>
           <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
@@ -180,17 +207,27 @@ export default function LibraryScreen({ playlistId }: Props) {
   const [playlists, setPlaylistsState] = useState<Playlist[]>([]);
   const [playlistFolders, setPlaylistFoldersState] = useState<PlaylistFolder[]>([]);
   const [trackMetadataById, setTrackMetadataById] = useState<TrackMetadataById>({});
+  const [profile, setProfile] = useState<UserProfilePreferences>({
+    username: "",
+    bio: "",
+    avatarDataUrl: null,
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const [status, setStatus] = useState("");
   const [newPlaylistName, setNewPlaylistName] = useState("");
   const [newFolderName, setNewFolderName] = useState("");
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const [addKind, setAddKind] = useState<"playlist" | "folder" | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [openTrackMenuId, setOpenTrackMenuId] = useState<string | null>(null);
+  const [openPlaylistMenuId, setOpenPlaylistMenuId] = useState<string | null>(null);
   const [renamingTrackId, setRenamingTrackId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [playlistCoverUrl, setPlaylistCoverUrl] = useState<string | null>(null);
   const [draggedTrackId, setDraggedTrackId] = useState<string | null>(null);
+  const [draggedPlaylistId, setDraggedPlaylistId] = useState<string | null>(null);
+  const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const offlineObjectUrlsRef = useRef<string[]>([]);
@@ -208,11 +245,26 @@ export default function LibraryScreen({ playlistId }: Props) {
     return activePlaylist.trackIds;
   }, [activePlaylist]);
 
+  const tracksById = useMemo(
+    () => new Map(tracks.map((track) => [track.id, track])),
+    [tracks]
+  );
+
+  const activeTrackIdSet = useMemo(
+    () => new Set(activeTrackIds),
+    [activeTrackIds]
+  );
+
+  const activeTrackOrder = useMemo(
+    () => new Map(activeTrackIds.map((trackId, index) => [trackId, index])),
+    [activeTrackIds]
+  );
+
   const visibleTracks = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
 
     const filteredTracks = tracks.filter((track) => {
-      if (playlistId && !activeTrackIds.includes(track.id)) {
+      if (playlistId && !activeTrackIdSet.has(track.id)) {
         return false;
       }
 
@@ -239,9 +291,9 @@ export default function LibraryScreen({ playlistId }: Props) {
     }
 
     return filteredTracks.sort(
-      (a, b) => activeTrackIds.indexOf(a.id) - activeTrackIds.indexOf(b.id)
+      (a, b) => (activeTrackOrder.get(a.id) ?? 0) - (activeTrackOrder.get(b.id) ?? 0)
     );
-  }, [activePlaylist?.name, activeTrackIds, playlistId, searchQuery, trackMetadataById, tracks]);
+  }, [activePlaylist?.name, activeTrackIdSet, activeTrackOrder, playlistId, searchQuery, trackMetadataById, tracks]);
 
   const visiblePlaylists = useMemo(
     () =>
@@ -250,6 +302,18 @@ export default function LibraryScreen({ playlistId }: Props) {
         .sort((a, b) => a.manualOrder - b.manualOrder),
     [playlists, selectedFolderId]
   );
+
+  const visibleFolders = useMemo(
+    () => [...playlistFolders].sort((a, b) => a.manualOrder - b.manualOrder),
+    [playlistFolders]
+  );
+
+  const selectedFolder = useMemo(
+    () => playlistFolders.find((folder) => folder.id === selectedFolderId) || null,
+    [playlistFolders, selectedFolderId]
+  );
+
+  const displayName = profile.username.trim() || user?.email || "Music Locker";
 
   const replaceTracks = useCallback((nextTracks: Track[]) => {
     offlineObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -263,6 +327,16 @@ export default function LibraryScreen({ playlistId }: Props) {
     return () => {
       offlineObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     };
+  }, []);
+
+  useEffect(() => {
+    function handleCurrentTrack(event: Event) {
+      const customEvent = event as CustomEvent<{ trackId: string | null }>;
+      setCurrentTrackId(customEvent.detail.trackId);
+    }
+
+    window.addEventListener(CURRENT_TRACK_EVENT, handleCurrentTrack as EventListener);
+    return () => window.removeEventListener(CURRENT_TRACK_EVENT, handleCurrentTrack as EventListener);
   }, []);
 
   const attachOfflineInfo = useCallback(async (inputTracks: Track[]) => {
@@ -311,6 +385,19 @@ export default function LibraryScreen({ playlistId }: Props) {
     return persistSyncedPreferences({ playlistFolders: nextFolders }, successMessage);
   }
 
+  function persistPlaylistsAndFolders(
+    nextPlaylists: Playlist[],
+    nextFolders: PlaylistFolder[],
+    successMessage?: string
+  ) {
+    setPlaylistsState(nextPlaylists);
+    setPlaylistFoldersState(nextFolders);
+    return persistSyncedPreferences(
+      { playlists: nextPlaylists, playlistFolders: nextFolders },
+      successMessage
+    );
+  }
+
   function persistTrackMetadata(nextMetadata: TrackMetadataById, successMessage?: string) {
     setTrackMetadataById(nextMetadata);
     return persistSyncedPreferences({ trackMetadata: nextMetadata }, successMessage);
@@ -337,6 +424,7 @@ export default function LibraryScreen({ playlistId }: Props) {
     const nextPlaylists = preferences.playlists;
     const nextPlaylistFolders = preferences.playlistFolders;
     const nextTrackMetadata = preferences.trackMetadata;
+    const nextProfile = preferences.profile;
     const currentPlaylist = playlistId
       ? nextPlaylists.find((playlist) => playlist.id === playlistId)
       : null;
@@ -357,6 +445,7 @@ export default function LibraryScreen({ playlistId }: Props) {
 
       replaceTracks(availableOfflineTracks);
       setTrackMetadataById(nextTrackMetadata);
+      setProfile(nextProfile);
       setPlaylistsState(nextPlaylists);
       setPlaylistFoldersState(nextPlaylistFolders);
       setPlaylistCoverUrl(currentPlaylist?.coverDataUrl || null);
@@ -385,6 +474,7 @@ export default function LibraryScreen({ playlistId }: Props) {
 
     replaceTracks(tracksWithOfflineInfo);
     setTrackMetadataById(nextTrackMetadata);
+    setProfile(nextProfile);
     setPlaylistsState(nextPlaylists);
     setPlaylistFoldersState(nextPlaylistFolders);
     setPlaylistCoverUrl(currentPlaylist?.coverDataUrl || null);
@@ -425,6 +515,8 @@ export default function LibraryScreen({ playlistId }: Props) {
 
     persistPlaylists(nextPlaylists, "Playlist created and synced.");
     setNewPlaylistName("");
+    setAddKind(null);
+    setIsAddMenuOpen(false);
   }
 
   function createFolder() {
@@ -450,6 +542,46 @@ export default function LibraryScreen({ playlistId }: Props) {
 
     persistPlaylistFolders(nextFolders, "Folder created and synced.");
     setNewFolderName("");
+    setAddKind(null);
+    setIsAddMenuOpen(false);
+  }
+
+  function groupPlaylistsIntoFolder(targetPlaylistId: string) {
+    if (!user || !draggedPlaylistId || draggedPlaylistId === targetPlaylistId) {
+      setDraggedPlaylistId(null);
+      return;
+    }
+
+    const sourcePlaylist = playlists.find((playlist) => playlist.id === draggedPlaylistId);
+    const targetPlaylist = playlists.find((playlist) => playlist.id === targetPlaylistId);
+
+    if (!sourcePlaylist || !targetPlaylist) {
+      setDraggedPlaylistId(null);
+      return;
+    }
+
+    const existingFolderId = targetPlaylist.folderId || sourcePlaylist.folderId || null;
+    const folderId = existingFolderId || crypto.randomUUID();
+    const nextFolders = existingFolderId
+      ? playlistFolders
+      : [
+          ...playlistFolders,
+          {
+            id: folderId,
+            name: `${targetPlaylist.name} folder`,
+            manualOrder: playlistFolders.length,
+            createdAt: new Date().toISOString(),
+          },
+        ];
+    const nextPlaylists = playlists.map((playlist) =>
+      playlist.id === sourcePlaylist.id || playlist.id === targetPlaylist.id
+        ? { ...playlist, folderId }
+        : playlist
+    );
+
+    persistPlaylistsAndFolders(nextPlaylists, nextFolders, "Folder created from playlists and synced.");
+    setSelectedFolderId(folderId);
+    setDraggedPlaylistId(null);
   }
 
   function movePlaylistToFolder(targetPlaylistId: string, folderId: string | null) {
@@ -465,6 +597,44 @@ export default function LibraryScreen({ playlistId }: Props) {
       nextPlaylists,
       folderId ? "Playlist moved to folder and synced." : "Playlist moved to library and synced."
     );
+    setOpenPlaylistMenuId(null);
+  }
+
+  function deleteFolder(folderId: string) {
+    if (!user) {
+      return;
+    }
+
+    const nextFolders = playlistFolders.filter((folder) => folder.id !== folderId);
+    const nextPlaylists = playlists.map((playlist) =>
+      playlist.folderId === folderId ? { ...playlist, folderId: null } : playlist
+    );
+
+    persistPlaylistsAndFolders(nextPlaylists, nextFolders, "Folder deleted. Playlists moved to library.");
+    setSelectedFolderId(null);
+  }
+
+  function deletePlaylist(playlist: Playlist) {
+    if (!user) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete "${playlist.name}"? Songs in the playlist will stay in your library.`);
+
+    if (!confirmed) {
+      setOpenPlaylistMenuId(null);
+      return;
+    }
+
+    const nextPlaylists = playlists
+      .filter((currentPlaylist) => currentPlaylist.id !== playlist.id)
+      .map((currentPlaylist, index) => ({
+        ...currentPlaylist,
+        manualOrder: index,
+      }));
+
+    persistPlaylists(nextPlaylists, "Playlist deleted and synced.");
+    setOpenPlaylistMenuId(null);
   }
 
   async function uploadTrackFiles(fileList: FileList | null) {
@@ -556,14 +726,53 @@ export default function LibraryScreen({ playlistId }: Props) {
     if (coverInputRef.current) coverInputRef.current.value = "";
   }
 
-  function playerTrackFromTrack(track: Track) {
+  function playerTrackFromTrack(track: Track, playlist?: Playlist | null) {
     return {
       id: track.id,
       title: trackMetadataById[track.id]?.title || track.title,
       artist: trackMetadataById[track.id]?.artist || track.artist || "Unknown artist",
-      coverDataUrl: trackMetadataById[track.id]?.coverDataUrl || activePlaylist?.coverDataUrl || null,
+      coverDataUrl: trackMetadataById[track.id]?.coverDataUrl || playlist?.coverDataUrl || activePlaylist?.coverDataUrl || null,
       audioUrl: track.offlineUrl || track.signedUrl || "",
     };
+  }
+
+  function tracksForPlaylist(playlist: Playlist) {
+    return playlist.trackIds
+      .map((trackId) => tracksById.get(trackId))
+      .filter((track): track is Track => Boolean(track));
+  }
+
+  function playableTracksForPlaylist(playlist: Playlist) {
+    const playlistTracks = tracksForPlaylist(playlist);
+
+    return navigator.onLine
+      ? playlistTracks.filter((track) => track.signedUrl || track.offlineUrl)
+      : playlistTracks.filter((track) => track.offlineUrl);
+  }
+
+  function playPlaylist(playlist: Playlist) {
+    const playableTracks = playableTracksForPlaylist(playlist);
+
+    if (playableTracks.length === 0) {
+      setStatus("No playable tracks in this playlist.");
+      return;
+    }
+
+    dispatchPlayQueue(playableTracks.map((track) => playerTrackFromTrack(track, playlist)), 0);
+    setOpenPlaylistMenuId(null);
+  }
+
+  function addPlaylistToQueue(playlist: Playlist) {
+    const playableTracks = playableTracksForPlaylist(playlist);
+
+    if (playableTracks.length === 0) {
+      setStatus("No playable tracks to add to queue.");
+      return;
+    }
+
+    dispatchAppendQueue(playableTracks.map((track) => playerTrackFromTrack(track, playlist)));
+    setStatus("Playlist added to queue.");
+    setOpenPlaylistMenuId(null);
   }
 
   function playTrackAtIndex(index: number) {
@@ -583,7 +792,7 @@ export default function LibraryScreen({ playlistId }: Props) {
       : visibleTracks.filter((track) => track.offlineUrl);
     const startIndex = Math.max(0, playableTracks.findIndex((track) => track.id === selectedTrack?.id));
 
-    dispatchPlayQueue(playableTracks.map(playerTrackFromTrack), startIndex);
+    dispatchPlayQueue(playableTracks.map((track) => playerTrackFromTrack(track, activePlaylist)), startIndex);
   }
 
   function playFirstTrack() {
@@ -765,119 +974,269 @@ export default function LibraryScreen({ playlistId }: Props) {
       <>
         <Navbar />
         <main className="app-shell min-h-screen px-6 py-8 text-[var(--app-text)]">
-          <div className="mx-auto max-w-5xl">
+          <div className="app-content">
             <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <h1 className="text-3xl font-semibold">Your Library</h1>
                 <p className="mt-2 text-sm text-[var(--app-muted)]">Simple playlists and folders.</p>
               </div>
 
-              <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr_auto]">
-                <input
-                  type="text"
-                  value={newFolderName}
-                  onChange={(event) => setNewFolderName(event.target.value)}
-                  placeholder="New folder"
-                  className="app-input px-3 py-2 text-sm"
-                />
-                <button type="button" onClick={createFolder} className="rounded-md border border-[var(--app-border)] px-4 py-2 text-sm">
-                  Add Folder
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsAddMenuOpen((current) => !current)}
+                  className="inline-flex h-10 items-center gap-2 rounded-full bg-white px-4 text-sm font-semibold text-black"
+                >
+                  <InlineIcon name="add" />
+                  Add
                 </button>
-                <input
-                  type="text"
-                  value={newPlaylistName}
-                  onChange={(event) => setNewPlaylistName(event.target.value)}
-                  placeholder="New playlist"
-                  className="app-input px-3 py-2 text-sm"
-                />
-                <button type="button" onClick={createPlaylist} className="app-button px-4 py-2 text-sm">
-                  Add Playlist
-                </button>
+                {isAddMenuOpen ? (
+                  <div className="absolute right-0 z-30 mt-2 w-72 rounded-2xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.78)] p-3 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAddKind("playlist")}
+                        className={`rounded-xl border px-3 py-2 text-sm ${
+                          addKind === "playlist" ? "border-white text-white" : "border-[var(--app-border)] text-[var(--app-muted)]"
+                        }`}
+                      >
+                        Playlist
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAddKind("folder")}
+                        className={`rounded-xl border px-3 py-2 text-sm ${
+                          addKind === "folder" ? "border-white text-white" : "border-[var(--app-border)] text-[var(--app-muted)]"
+                        }`}
+                      >
+                        Folder
+                      </button>
+                    </div>
+
+                    {addKind === "playlist" ? (
+                      <div className="mt-3 flex gap-2">
+                        <input
+                          type="text"
+                          value={newPlaylistName}
+                          onChange={(event) => setNewPlaylistName(event.target.value)}
+                          placeholder="Playlist name"
+                          className="app-input min-w-0 flex-1 px-3 py-2 text-sm"
+                          autoFocus
+                        />
+                        <button type="button" onClick={createPlaylist} className="app-button px-3 py-2 text-sm">
+                          Save
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {addKind === "folder" ? (
+                      <div className="mt-3 flex gap-2">
+                        <input
+                          type="text"
+                          value={newFolderName}
+                          onChange={(event) => setNewFolderName(event.target.value)}
+                          placeholder="Folder name"
+                          className="app-input min-w-0 flex-1 px-3 py-2 text-sm"
+                          autoFocus
+                        />
+                        <button type="button" onClick={createFolder} className="app-button px-3 py-2 text-sm">
+                          Save
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
 
-            <div className="mb-5 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setSelectedFolderId(null)}
-                className={`rounded-full border px-3 py-1.5 text-sm ${
-                  selectedFolderId === null
-                    ? "border-white text-white"
-                    : "border-[var(--app-border)] text-[var(--app-muted)]"
-                }`}
-              >
-                All
-              </button>
-              {[...playlistFolders]
-                .sort((a, b) => a.manualOrder - b.manualOrder)
-                .map((folder) => (
+            {selectedFolder ? (
+              <div className="mb-5 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
                   <button
-                    key={folder.id}
                     type="button"
-                    onClick={() => setSelectedFolderId(folder.id)}
-                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${
-                      selectedFolderId === folder.id
-                        ? "border-white text-white"
-                        : "border-[var(--app-border)] text-[var(--app-muted)]"
-                    }`}
+                    onClick={() => setSelectedFolderId(null)}
+                    className="rounded-full border border-[var(--app-border)] px-3 py-1.5 text-sm text-[var(--app-muted)] hover:text-white"
                   >
-                    <InlineIcon name="folder" className="h-4 w-4" />
-                    {folder.name}
+                    Back
                   </button>
-                ))}
-            </div>
+                  <div>
+                    <h2 className="text-xl font-semibold text-white">{selectedFolder.name}</h2>
+                    <p className="text-sm text-[var(--app-muted)]">
+                      {formatCount(playlists.filter((playlist) => playlist.folderId === selectedFolder.id).length)}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => deleteFolder(selectedFolder.id)}
+                  className="rounded-full border border-red-400/30 px-3 py-1.5 text-sm text-red-300 transition hover:bg-red-500/10"
+                >
+                  Delete folder
+                </button>
+              </div>
+            ) : null}
+
+            {!selectedFolderId && visibleFolders.length > 0 ? (
+              <div className="mb-8 grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
+                {visibleFolders.map((folder) => {
+                  const folderPlaylists = playlists.filter((playlist) => playlist.folderId === folder.id);
+                  const collageCovers = folderPlaylists
+                    .map((playlist) => {
+                      const firstTrackId = playlist.trackIds.find((trackId) => tracksById.has(trackId));
+
+                      return (
+                        playlist.coverDataUrl ||
+                        trackMetadataById[firstTrackId || ""]?.coverDataUrl ||
+                        null
+                      );
+                    })
+                    .filter((cover): cover is string => Boolean(cover))
+                    .slice(0, 4);
+
+                  return (
+                    <div key={folder.id} className="group">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFolderId(folder.id)}
+                        className="grid aspect-square w-full grid-cols-2 gap-1 overflow-hidden rounded-[18px] bg-[var(--app-glass)] p-2 text-left backdrop-blur transition hover:bg-[var(--app-glass-strong)]"
+                      >
+                        {Array.from({ length: 4 }).map((_, index) =>
+                          collageCovers[index] ? (
+                            <img
+                              key={`${folder.id}-${index}`}
+                              src={collageCovers[index]}
+                              alt=""
+                              className="h-full w-full rounded-md object-cover"
+                            />
+                          ) : (
+                            <span
+                              key={`${folder.id}-${index}`}
+                              className="rounded-md bg-white/[0.06]"
+                            />
+                          )
+                        )}
+                      </button>
+                      <div className="mt-3 flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedFolderId(folder.id)}
+                            className="block truncate text-left text-sm font-semibold uppercase tracking-wide text-white"
+                          >
+                            {folder.name}
+                          </button>
+                          <p className="text-sm text-[var(--app-muted)]">{formatCount(folderPlaylists.length)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
 
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {visiblePlaylists
                 .map((playlist) => {
-                  const playlistTracks = tracks.filter((track) => playlist.trackIds.includes(track.id));
+                  const firstTrackId = playlist.trackIds.find((trackId) => tracksById.has(trackId));
                   const firstCover =
                     playlist.coverDataUrl ||
-                    trackMetadataById[playlistTracks[0]?.id || ""]?.coverDataUrl ||
+                    trackMetadataById[firstTrackId || ""]?.coverDataUrl ||
                     null;
 
                   return (
-                    <div key={playlist.id} className="app-card overflow-hidden p-3">
-                      <Link href={`/library/${playlist.id}`} className="group block">
-                        <div className="aspect-square overflow-hidden rounded-md bg-[#151515]">
-                          {firstCover ? (
-                            <img src={firstCover} alt={playlist.name} className="h-full w-full object-cover" />
-                          ) : (
-                            <div className="flex h-full items-center justify-center text-sm text-[var(--app-muted)]">
-                              Empty
-                            </div>
-                          )}
-                        </div>
-                        <div className="mt-3">
-                          <p className="text-sm font-medium text-[var(--app-text)]">{playlist.name}</p>
-                          <p className="text-xs text-[var(--app-muted)]">{formatCount(playlist.trackIds.length)}</p>
-                        </div>
-                      </Link>
-                      <label className="mt-3 block">
-                        <span className="sr-only">Move {playlist.name} to folder</span>
-                        <select
-                          value={playlist.folderId || ""}
-                          onChange={(event) => movePlaylistToFolder(playlist.id, event.target.value || null)}
-                          className="app-input w-full px-2 py-1.5 text-xs"
+                    <div
+                      key={playlist.id}
+                      draggable
+                      onDragStart={() => setDraggedPlaylistId(playlist.id)}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={() => groupPlaylistsIntoFolder(playlist.id)}
+                      onDragEnd={() => setDraggedPlaylistId(null)}
+                      className={`app-card relative overflow-hidden p-3 ${
+                        draggedPlaylistId === playlist.id ? "opacity-45" : ""
+                      }`}
+                    >
+                      <div className="group relative">
+                        <Link href={`/library/${playlist.id}`} className="block">
+                          <div className="aspect-square overflow-hidden rounded-md bg-[var(--app-glass)]">
+                            {firstCover ? (
+                              <img src={firstCover} alt={playlist.name} className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="flex h-full items-center justify-center text-sm text-[var(--app-muted)]">
+                                Empty
+                              </div>
+                            )}
+                          </div>
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => playPlaylist(playlist)}
+                          disabled={playlist.trackIds.length === 0}
+                          className="absolute bottom-2 right-2 flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-[0_12px_30px_rgba(0,0,0,0.35)] transition hover:scale-105 disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label={`Play ${playlist.name}`}
+                          title="Play playlist"
                         >
-                          <option value="">Library</option>
-                          {[...playlistFolders]
-                            .sort((a, b) => a.manualOrder - b.manualOrder)
-                            .map((folder) => (
-                              <option key={folder.id} value={folder.id}>
-                                {folder.name}
-                              </option>
-                            ))}
-                        </select>
-                      </label>
+                          <InlineIcon name="play" className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="mt-3 flex items-start justify-between gap-2">
+                        <Link href={`/library/${playlist.id}`} className="min-w-0">
+                          <p className="truncate text-sm font-medium text-[var(--app-text)]">{playlist.name}</p>
+                          <p className="text-xs text-[var(--app-muted)]">{formatCount(playlist.trackIds.length)}</p>
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => setOpenPlaylistMenuId((current) => (current === playlist.id ? null : playlist.id))}
+                          className="rounded-full px-2 text-lg leading-none text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
+                          aria-label={`Open menu for ${playlist.name}`}
+                        >
+                          ...
+                        </button>
+                      </div>
+
+                      {openPlaylistMenuId === playlist.id ? (
+                        <div className="absolute right-2 top-2 z-30 w-56 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.86)] p-2 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+                          <button
+                            type="button"
+                            onClick={() => addPlaylistToQueue(playlist)}
+                            className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
+                          >
+                            <span aria-hidden="true">+</span>
+                            Add to queue
+                          </button>
+                          <label className="block px-3 py-2">
+                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">
+                              Move
+                            </span>
+                            <select
+                              value={playlist.folderId || ""}
+                              onChange={(event) => movePlaylistToFolder(playlist.id, event.target.value || null)}
+                              className="app-input w-full px-2 py-1.5 text-xs"
+                            >
+                              <option value="">Library</option>
+                              {visibleFolders.map((folder) => (
+                                <option key={folder.id} value={folder.id}>
+                                  {folder.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => deletePlaylist(playlist)}
+                            className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-red-300 hover:bg-white/[0.08]"
+                          >
+                            Delete playlist
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}
             </div>
 
-            {visiblePlaylists.length === 0 ? (
+            {visiblePlaylists.length === 0 && (selectedFolderId || visibleFolders.length === 0) ? (
               <div className="mt-8 rounded-lg border border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">
-                No playlists in this folder.
+                {selectedFolderId ? "No playlists in this folder." : "No playlists yet."}
               </div>
             ) : null}
           </div>
@@ -890,17 +1249,22 @@ export default function LibraryScreen({ playlistId }: Props) {
     <>
       <Navbar />
       <main className="app-shell min-h-screen px-5 py-6 pb-32 text-[var(--app-text)] sm:px-8">
-        <div className="mx-auto max-w-6xl">
+        <div className="app-content">
           <div className="mb-8 flex items-center justify-between gap-4">
-            <Link href="/library" className="text-sm text-[var(--app-muted)]">
-              Back
+            <Link
+              href="/library"
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--app-border)] text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
+              aria-label="Back to library"
+              title="Back to library"
+            >
+              <InlineIcon name="back" />
             </Link>
-            <p className="text-sm text-[var(--app-muted)]">{user.email}</p>
+            <p className="text-sm text-[var(--app-muted)]">{displayName}</p>
           </div>
 
           <div className="grid gap-10 lg:grid-cols-[minmax(280px,420px)_1fr] lg:items-start">
-            <div className="lg:sticky lg:top-8">
-              <label className="group relative block aspect-square cursor-pointer overflow-hidden rounded-[18px] bg-[#151515] shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+            <div className="mx-auto w-full max-w-64 sm:max-w-80 lg:sticky lg:top-8 lg:max-w-none">
+              <label className="group relative block aspect-square cursor-pointer overflow-hidden rounded-[18px] bg-[var(--app-glass)] shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl">
                 {playlistCoverUrl ? (
                   <img
                     src={playlistCoverUrl}
@@ -908,7 +1272,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                     className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
                   />
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_25%_20%,#2b2b2b,transparent_32%),linear-gradient(145deg,#181818,#0c0c0c)] text-sm text-[var(--app-muted)]">
+                  <div className="flex h-full w-full items-center justify-center bg-[var(--app-glass)] text-sm text-[var(--app-muted)]">
                     No cover
                   </div>
                 )}
@@ -923,7 +1287,7 @@ export default function LibraryScreen({ playlistId }: Props) {
               <div className="flex items-start justify-between gap-5">
                 <div className="min-w-0">
                   <p className="mb-2 truncate text-sm text-[var(--app-muted)]">
-                    {user.email} - {visibleTracks.length} tracks
+                    {displayName} - {visibleTracks.length} tracks
                   </p>
                   <h1 className="truncate text-4xl font-semibold leading-tight text-white sm:text-5xl">
                     {activePlaylist?.name || "Playlist"}
@@ -955,7 +1319,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isUploading}
-                  className="flex h-11 w-full items-center justify-center rounded-xl bg-white/[0.08] text-sm font-semibold text-white transition hover:bg-white/[0.12]"
+                  className="flex h-11 w-full items-center justify-center rounded-xl bg-[var(--app-glass)] text-sm font-semibold text-white backdrop-blur transition hover:bg-[var(--app-glass-strong)]"
                 >
                   {isUploading ? "Uploading..." : "+ Add tracks"}
                 </button>
@@ -972,30 +1336,35 @@ export default function LibraryScreen({ playlistId }: Props) {
 
                 <div className="divide-y divide-white/[0.06]">
                   {visibleTracks.map((track, index) => {
-                    const displayTitle = trackMetadataById[track.id]?.title || track.title;
-                    const displayArtist = trackMetadataById[track.id]?.artist || track.artist || "Unknown artist";
-                    const trackDate = formatTrackDate(track.created_at);
+                  const displayTitle = trackMetadataById[track.id]?.title || track.title;
+                  const displayArtist = trackMetadataById[track.id]?.artist || track.artist || "Unknown artist";
+                  const trackDate = formatTrackDate(track.created_at);
+                  const isCurrentTrack = currentTrackId === track.id;
 
-                    return (
-                      <div
+                  return (
+                    <div
                         key={track.id}
                         draggable={renamingTrackId !== track.id}
                         onDragStart={() => setDraggedTrackId(track.id)}
                         onDragOver={(event) => event.preventDefault()}
                         onDrop={() => reorderTrack(track.id)}
                         onDragEnd={() => setDraggedTrackId(null)}
-                        className={`group relative grid grid-cols-[2.5rem_1fr_auto] items-center gap-3 py-3 ${
-                          draggedTrackId === track.id ? "opacity-45" : ""
-                        }`}
-                      >
-                        <button
+                      className={`group relative grid grid-cols-[2.5rem_1fr_auto] items-center gap-3 rounded-xl px-2 py-3 ${
+                        draggedTrackId === track.id ? "opacity-45" : ""
+                      } ${
+                        isCurrentTrack ? "bg-green-500/10 text-green-300" : ""
+                      }`}
+                    >
+                      <button
                           type="button"
                           onClick={() => playTrackAtIndex(index)}
                           disabled={renamingTrackId === track.id}
-                          className="text-right text-sm text-[var(--app-muted)] group-hover:text-white disabled:cursor-default"
-                        >
-                          {index + 1}
-                        </button>
+                        className={`text-right text-sm group-hover:text-white disabled:cursor-default ${
+                          isCurrentTrack ? "text-green-300" : "text-[var(--app-muted)]"
+                        }`}
+                      >
+                        {index + 1}
+                      </button>
 
                         <div className="min-w-0">
                           {renamingTrackId === track.id ? (
@@ -1026,20 +1395,19 @@ export default function LibraryScreen({ playlistId }: Props) {
                               </button>
                             </div>
                           ) : (
-                            <button type="button" onClick={() => playTrackAtIndex(index)} className="block w-full text-left">
-                              <span className="flex min-w-0 items-center gap-2">
-                                <span className="truncate text-sm font-semibold text-white">{displayTitle}</span>
-                                {track.isOfflineAvailable ? (
-                                  <span className="shrink-0 rounded-full border border-green-900/60 px-2 py-0.5 text-[10px] font-medium text-green-300">
-                                    Offline
+                          <button type="button" onClick={() => playTrackAtIndex(index)} className="block w-full text-left">
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className={`truncate text-sm font-semibold ${
+                                isCurrentTrack ? "text-green-300" : "text-white"
+                              }`}>{displayTitle}</span>
+                              {track.isOfflineAvailable ? (
+                                <span className="shrink-0 rounded-full border border-green-900/60 px-2 py-0.5 text-[10px] font-medium text-green-300">
+                                  Offline
                                   </span>
                                 ) : null}
                               </span>
                             </button>
                           )}
-                          <span className="block truncate text-xs text-[var(--app-muted)]">
-                            {displayArtist}{trackDate ? ` - ${trackDate}` : ""}{track.offlineOnly ? " - downloaded only" : ""}
-                          </span>
                         </div>
                         <button
                           type="button"
@@ -1051,7 +1419,14 @@ export default function LibraryScreen({ playlistId }: Props) {
                         </button>
 
                         {openTrackMenuId === track.id ? (
-                          <div className="absolute right-0 top-10 z-20 w-44 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[#181818] py-1 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                          <div className="absolute right-0 top-10 z-20 w-56 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.86)] py-1 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur">
+                            <div className="border-b border-white/[0.08] px-3 py-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Properties</p>
+                              <p className="mt-1 truncate text-xs text-[var(--app-muted)]">Artist: {displayArtist}</p>
+                              <p className="truncate text-xs text-[var(--app-muted)]">Date: {trackDate || "Unknown"}</p>
+                              <p className="truncate text-xs text-[var(--app-muted)]">Size: {formatFileSize(track.file_size)}</p>
+                              <p className="truncate text-xs text-[var(--app-muted)]">Type: {track.mime_type || "Unknown"}</p>
+                            </div>
                             <button
                               type="button"
                               onClick={() => startRenamingTrack(track)}
