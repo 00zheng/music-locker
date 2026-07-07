@@ -176,6 +176,85 @@ function hasMeaningfulPreferences(preferences: SyncedUserPreferences) {
   );
 }
 
+function uniqueValues(values: string[]) {
+  return Array.from(new Set(values));
+}
+
+function mergePreferences(
+  localPreferences: SyncedUserPreferences,
+  remotePreferences: SyncedUserPreferences
+) {
+  const localTimestamp = Date.parse(localPreferences.updatedAt);
+  const remoteTimestamp = Date.parse(remotePreferences.updatedAt);
+  const preferLocal =
+    Number.isFinite(localTimestamp) &&
+    Number.isFinite(remoteTimestamp) &&
+    localTimestamp > remoteTimestamp;
+  const preferredPreferences = preferLocal ? localPreferences : remotePreferences;
+  const fallbackPreferences = preferLocal ? remotePreferences : localPreferences;
+  const playlistIds = uniqueValues([
+    ...preferredPreferences.playlists.map((playlist) => playlist.id),
+    ...fallbackPreferences.playlists.map((playlist) => playlist.id),
+  ]);
+  const folderIds = uniqueValues([
+    ...preferredPreferences.playlistFolders.map((folder) => folder.id),
+    ...fallbackPreferences.playlistFolders.map((folder) => folder.id),
+  ]);
+
+  return normalizePreferences({
+    ...preferredPreferences,
+    updatedAt: new Date(
+      Math.max(
+        Number.isFinite(localTimestamp) ? localTimestamp : 0,
+        Number.isFinite(remoteTimestamp) ? remoteTimestamp : 0
+      )
+    ).toISOString(),
+    trackMetadata: {
+      ...fallbackPreferences.trackMetadata,
+      ...preferredPreferences.trackMetadata,
+    },
+    playlists: playlistIds
+      .map((playlistId, index) => {
+        const preferredPlaylist = preferredPreferences.playlists.find((playlist) => playlist.id === playlistId);
+        const fallbackPlaylist = fallbackPreferences.playlists.find((playlist) => playlist.id === playlistId);
+        const playlist = preferredPlaylist || fallbackPlaylist;
+
+        if (!playlist) {
+          return null;
+        }
+
+        return {
+          ...playlist,
+          manualOrder:
+            typeof preferredPlaylist?.manualOrder === "number"
+              ? preferredPlaylist.manualOrder
+              : fallbackPlaylist?.manualOrder ?? index,
+          trackIds: uniqueValues([
+            ...(preferredPlaylist?.trackIds || []),
+            ...(fallbackPlaylist?.trackIds || []),
+          ]),
+        };
+      })
+      .filter((playlist): playlist is Playlist => Boolean(playlist))
+      .sort((a, b) => a.manualOrder - b.manualOrder),
+    playlistFolders: folderIds
+      .map((folderId, index) => {
+        const folder =
+          preferredPreferences.playlistFolders.find((currentFolder) => currentFolder.id === folderId) ||
+          fallbackPreferences.playlistFolders.find((currentFolder) => currentFolder.id === folderId);
+
+        return folder
+          ? {
+              ...folder,
+              manualOrder: typeof folder.manualOrder === "number" ? folder.manualOrder : index,
+            }
+          : null;
+      })
+      .filter((folder): folder is PlaylistFolder => Boolean(folder))
+      .sort((a, b) => a.manualOrder - b.manualOrder),
+  });
+}
+
 function localUserPreferences(userId: string): SyncedUserPreferences {
   const savedSyncedPreferences = readJson<SyncedUserPreferences | null>(
     syncedLocalKey(userId),
@@ -281,25 +360,20 @@ export async function loadSyncedUserPreferences(
   if (!error && data) {
     try {
       const remotePreferences = normalizePreferences(JSON.parse(await data.text()));
-      const localTimestamp = Date.parse(localPreferences.updatedAt);
-      const remoteTimestamp = Date.parse(remotePreferences.updatedAt);
+      const mergedPreferences = mergePreferences(localPreferences, remotePreferences);
 
-      if (
-        Number.isFinite(localTimestamp) &&
-        Number.isFinite(remoteTimestamp) &&
-        localTimestamp > remoteTimestamp &&
-        hasMeaningfulPreferences(localPreferences)
-      ) {
-        await saveSyncedUserPreferences(supabase, userId, localPreferences);
+      writeLocalUserPreferences(userId, mergedPreferences);
+
+      if (JSON.stringify(mergedPreferences) !== JSON.stringify(remotePreferences)) {
+        await saveSyncedUserPreferences(supabase, userId, mergedPreferences);
         return {
-          preferences: localPreferences,
+          preferences: mergedPreferences,
           source: "local" as const,
         };
       }
 
-      writeLocalUserPreferences(userId, remotePreferences);
       return {
-        preferences: remotePreferences,
+        preferences: mergedPreferences,
         source: "cloud" as const,
       };
     } catch {

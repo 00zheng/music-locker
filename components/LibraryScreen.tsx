@@ -229,6 +229,8 @@ export default function LibraryScreen({ playlistId }: Props) {
   const [draggedTrackId, setDraggedTrackId] = useState<string | null>(null);
   const [draggedPlaylistId, setDraggedPlaylistId] = useState<string | null>(null);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
+  const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
+  const [isDeletingTracks, setIsDeletingTracks] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const offlineObjectUrlsRef = useRef<string[]>([]);
@@ -338,6 +340,24 @@ export default function LibraryScreen({ playlistId }: Props) {
     () => playlistFolders.find((folder) => folder.id === selectedFolderId) || null,
     [playlistFolders, selectedFolderId]
   );
+
+  const selectedTrackIdsInLibrary = useMemo(
+    () => selectedTrackIds.filter((trackId) => tracksById.has(trackId)),
+    [selectedTrackIds, tracksById]
+  );
+
+  const selectedTrackIdSet = useMemo(
+    () => new Set(selectedTrackIdsInLibrary),
+    [selectedTrackIdsInLibrary]
+  );
+
+  const selectedVisibleTrackIds = useMemo(
+    () => visibleTracks.map((track) => track.id).filter((trackId) => selectedTrackIdSet.has(trackId)),
+    [selectedTrackIdSet, visibleTracks]
+  );
+
+  const allVisibleTracksSelected =
+    visibleTracks.length > 0 && selectedVisibleTrackIds.length === visibleTracks.length;
 
   const displayName = profile.username.trim() || user?.email || "Music Locker";
 
@@ -531,6 +551,109 @@ export default function LibraryScreen({ playlistId }: Props) {
       document.removeEventListener("visibilitychange", refreshVisibleLibrary);
     };
   }, [loadData]);
+
+  function toggleTrackSelection(trackId: string) {
+    setSelectedTrackIds((currentIds) =>
+      currentIds.includes(trackId)
+        ? currentIds.filter((currentTrackId) => currentTrackId !== trackId)
+        : [...currentIds, trackId]
+    );
+  }
+
+  function toggleVisibleTrackSelection() {
+    if (allVisibleTracksSelected) {
+      const visibleTrackIds = new Set(visibleTracks.map((track) => track.id));
+      setSelectedTrackIds((currentIds) => currentIds.filter((trackId) => !visibleTrackIds.has(trackId)));
+      return;
+    }
+
+    setSelectedTrackIds((currentIds) => {
+      const nextTrackIds = new Set(currentIds);
+      visibleTracks.forEach((track) => nextTrackIds.add(track.id));
+      return Array.from(nextTrackIds);
+    });
+  }
+
+  async function deleteTracks(trackIds: string[]) {
+    if (!user || trackIds.length === 0) {
+      return;
+    }
+
+    const uniqueTrackIds = Array.from(new Set(trackIds));
+    const tracksToDelete = uniqueTrackIds
+      .map((trackId) => tracksById.get(trackId))
+      .filter((track): track is Track => Boolean(track));
+
+    if (tracksToDelete.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${tracksToDelete.length} track${tracksToDelete.length === 1 ? "" : "s"} from your account? This removes the audio from every device and playlist.`
+    );
+
+    if (!confirmed) {
+      setOpenTrackMenuId(null);
+      return;
+    }
+
+    setIsDeletingTracks(true);
+    setStatus(`Deleting ${tracksToDelete.length} track${tracksToDelete.length === 1 ? "" : "s"}...`);
+
+    const storagePaths = tracksToDelete
+      .map((track) => track.storage_path)
+      .filter((path): path is string => Boolean(path));
+
+    if (storagePaths.length > 0) {
+      const { error: storageError } = await supabase.storage.from("music").remove(storagePaths);
+
+      if (storageError) {
+        setStatus(storageError.message);
+        setIsDeletingTracks(false);
+        return;
+      }
+    }
+
+    const { error: deleteError } = await supabase
+      .from("tracks")
+      .delete()
+      .eq("user_id", user.id)
+      .in("id", uniqueTrackIds);
+
+    if (deleteError) {
+      setStatus(deleteError.message);
+      setIsDeletingTracks(false);
+      return;
+    }
+
+    if ("caches" in window) {
+      const cache = await caches.open(OFFLINE_AUDIO_CACHE);
+      await Promise.all(uniqueTrackIds.map((trackId) => cache.delete(offlineAudioRequest(trackId))));
+    }
+
+    uniqueTrackIds.forEach((trackId) => removeOfflineTrackRecord(user.id, trackId));
+
+    const deletedTrackIdSet = new Set(uniqueTrackIds);
+    const nextPlaylists = playlists.map((playlist) => ({
+      ...playlist,
+      trackIds: playlist.trackIds.filter((trackId) => !deletedTrackIdSet.has(trackId)),
+    }));
+    const nextTrackMetadata = { ...trackMetadataById };
+    uniqueTrackIds.forEach((trackId) => {
+      delete nextTrackMetadata[trackId];
+    });
+
+    setPlaylistsState(nextPlaylists);
+    setTrackMetadataById(nextTrackMetadata);
+    setSelectedTrackIds((currentIds) => currentIds.filter((trackId) => !deletedTrackIdSet.has(trackId)));
+    setOpenTrackMenuId(null);
+    await persistSyncedPreferences(
+      { playlists: nextPlaylists, trackMetadata: nextTrackMetadata },
+      `${tracksToDelete.length} track${tracksToDelete.length === 1 ? "" : "s"} deleted and synced.`
+    );
+    setIsDeletingTracks(false);
+    await loadData();
+  }
 
   async function createPlaylist() {
     if (!user) {
@@ -1375,6 +1498,39 @@ export default function LibraryScreen({ playlistId }: Props) {
               </div>
 
               <div>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <label className="flex items-center gap-2 text-xs text-[var(--app-muted)]">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleTracksSelected}
+                      onChange={toggleVisibleTrackSelection}
+                      disabled={visibleTracks.length === 0}
+                      className="h-4 w-4 accent-white disabled:opacity-40"
+                    />
+                    Select visible
+                  </label>
+
+                  {selectedTrackIdsInLibrary.length > 0 ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTrackIds([])}
+                        className="rounded-full border border-[var(--app-border)] px-3 py-1.5 text-xs text-[var(--app-muted)] hover:text-white"
+                      >
+                        Clear {selectedTrackIdsInLibrary.length}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void deleteTracks(selectedTrackIdsInLibrary)}
+                        disabled={isDeletingTracks}
+                        className="rounded-full border border-red-400/30 px-3 py-1.5 text-xs font-semibold text-red-300 transition hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isDeletingTracks ? "Deleting..." : `Delete ${selectedTrackIdsInLibrary.length}`}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
                 <input
                   type="text"
                   value={searchQuery}
@@ -1398,12 +1554,20 @@ export default function LibraryScreen({ playlistId }: Props) {
                         onDragOver={(event) => event.preventDefault()}
                         onDrop={() => reorderTrack(track.id)}
                         onDragEnd={() => setDraggedTrackId(null)}
-                      className={`group relative grid grid-cols-[2.5rem_1fr_auto] items-center gap-3 rounded-xl px-2 py-3 ${
+                      className={`group relative grid grid-cols-[2rem_2.5rem_1fr_auto] items-center gap-3 rounded-xl px-2 py-3 ${
                         draggedTrackId === track.id ? "opacity-45" : ""
                       } ${
                         isCurrentTrack ? "bg-green-500/10 text-green-300" : ""
                       }`}
                     >
+                      <input
+                        type="checkbox"
+                        checked={selectedTrackIdSet.has(track.id)}
+                        onChange={() => toggleTrackSelection(track.id)}
+                        onClick={(event) => event.stopPropagation()}
+                        className="h-4 w-4 justify-self-center accent-white"
+                        aria-label={`Select ${displayTitle}`}
+                      />
                       <button
                           type="button"
                           onClick={() => playTrackAtIndex(index)}
@@ -1514,9 +1678,17 @@ export default function LibraryScreen({ playlistId }: Props) {
                                 onClick={() => removeTrackFromPlaylist(track.id)}
                                 className="block w-full px-3 py-2 text-left text-red-300 hover:bg-white/[0.08]"
                               >
-                                Delete from playlist
+                                Remove from playlist
                               </button>
                             ) : null}
+                            <button
+                              type="button"
+                              onClick={() => void deleteTracks([track.id])}
+                              disabled={isDeletingTracks}
+                              className="block w-full px-3 py-2 text-left text-red-300 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Delete track
+                            </button>
                           </div>
                         ) : null}
                       </div>
