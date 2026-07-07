@@ -14,7 +14,7 @@ import {
 import { dispatchPlayQueue } from "@/components/PlayerBridge";
 import LogoutButton from "./LogoutButton";
 
-const ALL_TRACKS_PLAYLIST_ID = "all-tracks";
+const NAVBAR_REFRESH_INTERVAL_MS = 15000;
 
 type SearchTrack = {
   id: string;
@@ -157,43 +157,89 @@ export default function Navbar() {
 
   useEffect(() => {
     let isMounted = true;
+    let isLoading = false;
+    let realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
 
     async function loadNavbarData() {
-      const { data } = await supabase.auth.getSession();
-      const userId = data.session?.user?.id;
-
-      if (!userId || !isMounted) {
+      if (isLoading || !navigator.onLine) {
         return;
       }
 
-      const { preferences } = await loadSyncedUserPreferences(supabase, userId);
+      isLoading = true;
 
-      if (!isMounted) {
-        return;
+      try {
+        const { data } = await supabase.auth.getSession();
+        const userId = data.session?.user?.id;
+
+        if (!userId || !isMounted) {
+          return;
+        }
+
+        const { preferences } = await loadSyncedUserPreferences(supabase, userId);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setUsername(preferences.profile.username || "");
+        setAvatarDataUrl(preferences.profile.avatarDataUrl || null);
+        setPlaylistsState(preferences.playlists);
+        setTrackMetadataById(preferences.trackMetadata);
+
+        const { data: trackData } = await supabase
+          .from("tracks")
+          .select("id,title,artist,storage_path")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false });
+
+        if (isMounted) {
+          setTracks((trackData || []) as SearchTrack[]);
+        }
+
+        if (!realtimeChannel) {
+          realtimeChannel = supabase
+            .channel(`navbar-sync-${userId}`)
+            .on(
+              "postgres_changes",
+              {
+                event: "*",
+                schema: "public",
+                table: "tracks",
+                filter: `user_id=eq.${userId}`,
+              },
+              () => void loadNavbarData()
+            )
+            .subscribe();
+        }
+      } finally {
+        isLoading = false;
       }
+    }
 
-      setUsername(preferences.profile.username || "");
-      setAvatarDataUrl(preferences.profile.avatarDataUrl || null);
-      setPlaylistsState(preferences.playlists);
-      setTrackMetadataById(preferences.trackMetadata);
-
-      const { data: trackData } = await supabase
-        .from("tracks")
-        .select("id,title,artist,storage_path")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
-
-      if (isMounted) {
-        setTracks((trackData || []) as SearchTrack[]);
+    function refreshWhenVisible() {
+      if (document.visibilityState === "visible") {
+        void loadNavbarData();
       }
     }
 
     void loadNavbarData();
+    const refreshIntervalId = window.setInterval(loadNavbarData, NAVBAR_REFRESH_INTERVAL_MS);
     window.addEventListener(USER_PREFERENCES_UPDATED_EVENT, loadNavbarData);
+    window.addEventListener("focus", loadNavbarData);
+    window.addEventListener("online", loadNavbarData);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       isMounted = false;
+      window.clearInterval(refreshIntervalId);
       window.removeEventListener(USER_PREFERENCES_UPDATED_EVENT, loadNavbarData);
+      window.removeEventListener("focus", loadNavbarData);
+      window.removeEventListener("online", loadNavbarData);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+
+      if (realtimeChannel) {
+        void supabase.removeChannel(realtimeChannel);
+      }
     };
   }, []);
 
@@ -254,7 +300,7 @@ export default function Navbar() {
         id: `track-${track.id}`,
         label: title,
         detail: artist,
-        href: parentPlaylist ? `/library/${parentPlaylist.id}` : `/library/${ALL_TRACKS_PLAYLIST_ID}`,
+        href: parentPlaylist ? `/library/${parentPlaylist.id}` : "/library",
         icon: "music" as const,
         kind: "track" as const,
         artist,

@@ -54,6 +54,13 @@ type OfflineTrackRecord = {
 const OFFLINE_AUDIO_CACHE = "music-locker-audio-v1";
 const OFFLINE_TRACKS_PREFIX = "music-locker-offline-tracks:";
 const ALL_TRACKS_PLAYLIST_ID = "all-tracks";
+const PREFERENCES_REFRESH_INTERVAL_MS = 8000;
+const TRACKS_REFRESH_INTERVAL_MS = 30000;
+
+type LoadDataOptions = {
+  showLoading?: boolean;
+  clearStatus?: boolean;
+};
 
 function offlineAudioRequest(trackId: string) {
   return new Request(`/offline-audio/${trackId}`);
@@ -235,6 +242,7 @@ export default function LibraryScreen({ playlistId }: Props) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const offlineObjectUrlsRef = useRef<string[]>([]);
+  const isLoadingDataRef = useRef(false);
 
   const allTracksPlaylist = useMemo<Playlist>(
     () => ({
@@ -323,13 +331,9 @@ export default function LibraryScreen({ playlistId }: Props) {
         .filter((playlist) => (playlist.folderId || null) === selectedFolderId)
         .sort((a, b) => a.manualOrder - b.manualOrder);
 
-      if (selectedFolderId || tracks.length === 0) {
-        return folderPlaylists;
-      }
-
-      return [allTracksPlaylist, ...folderPlaylists];
+      return folderPlaylists;
     },
-    [allTracksPlaylist, playlists, selectedFolderId, tracks.length]
+    [playlists, selectedFolderId]
   );
 
   const visibleFolders = useMemo(
@@ -352,6 +356,11 @@ export default function LibraryScreen({ playlistId }: Props) {
     [selectedTrackIdsInLibrary]
   );
 
+  const availableActiveTrackCount = useMemo(
+    () => activeTrackIds.filter((trackId) => tracksById.has(trackId)).length,
+    [activeTrackIds, tracksById]
+  );
+  const unavailableActiveTrackCount = Math.max(0, activeTrackIds.length - availableActiveTrackCount);
   const displayName = profile.username.trim() || user?.email || "Music Locker";
 
   const replaceTracks = useCallback((nextTracks: Track[]) => {
@@ -393,6 +402,18 @@ export default function LibraryScreen({ playlistId }: Props) {
 
     return tracksWithOfflineInfo;
   }, []);
+
+  const applySyncedPreferences = useCallback((preferences: SyncedUserPreferences) => {
+    const currentPlaylist = playlistId
+      ? preferences.playlists.find((playlist) => playlist.id === playlistId)
+      : null;
+
+    setTrackMetadataById(preferences.trackMetadata);
+    setProfile(preferences.profile);
+    setPlaylistsState(preferences.playlists);
+    setPlaylistFoldersState(preferences.playlistFolders);
+    setPlaylistCoverUrl(currentPlaylist?.coverDataUrl || null);
+  }, [playlistId]);
 
   function persistSyncedPreferences(
     value: Partial<SyncedUserPreferences>,
@@ -442,84 +463,84 @@ export default function LibraryScreen({ playlistId }: Props) {
     return persistSyncedPreferences({ trackMetadata: nextMetadata }, successMessage);
   }
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-
-    const { data: sessionData } = await supabase.auth.getSession();
-    let currentUser = sessionData.session?.user ?? null;
-
-    if (!currentUser && navigator.onLine) {
-      const { data: userData } = await supabase.auth.getUser();
-      currentUser = userData.user;
-    }
-
-    if (!currentUser) {
-      router.push("/login");
+  const loadData = useCallback(async (options: LoadDataOptions = {}) => {
+    if (isLoadingDataRef.current) {
       return;
     }
 
-    setUser(currentUser);
-    const { preferences } = await loadSyncedUserPreferences(supabase, currentUser.id);
-    const nextPlaylists = preferences.playlists;
-    const nextPlaylistFolders = preferences.playlistFolders;
-    const nextTrackMetadata = preferences.trackMetadata;
-    const nextProfile = preferences.profile;
-    const currentPlaylist = playlistId
-      ? nextPlaylists.find((playlist) => playlist.id === playlistId)
-      : null;
+    isLoadingDataRef.current = true;
+    const { showLoading = true, clearStatus = true } = options;
 
-    const { data, error } = await supabase
-      .from("tracks")
-      .select("*")
-      .eq("user_id", currentUser.id)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      const offlineTracks = readOfflineTrackRecords(currentUser.id).map((track) => ({
-        ...track,
-        offlineOnly: true,
-      }));
-      const offlineTracksWithUrls = await attachOfflineInfo(offlineTracks);
-      const availableOfflineTracks = offlineTracksWithUrls.filter((track) => track.isOfflineAvailable);
-
-      replaceTracks(availableOfflineTracks);
-      setTrackMetadataById(nextTrackMetadata);
-      setProfile(nextProfile);
-      setPlaylistsState(nextPlaylists);
-      setPlaylistFoldersState(nextPlaylistFolders);
-      setPlaylistCoverUrl(currentPlaylist?.coverDataUrl || null);
-      setStatus(
-        availableOfflineTracks.length > 0
-          ? "Offline mode: showing downloaded songs only."
-          : "Offline mode: no downloaded songs available."
-      );
-      setLoading(false);
-      return;
+    if (showLoading) {
+      setLoading(true);
     }
 
-    const tracksWithUrls = await Promise.all(
-      (data || []).map(async (track) => {
-        const { data: signedData, error: signedUrlError } = await supabase.storage
-          .from("music")
-          .createSignedUrl(track.storage_path, 60 * 60);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      let currentUser = sessionData.session?.user ?? null;
 
-        return {
+      if (!currentUser && navigator.onLine) {
+        const { data: userData } = await supabase.auth.getUser();
+        currentUser = userData.user;
+      }
+
+      if (!currentUser) {
+        router.push("/login");
+        return;
+      }
+
+      setUser((existingUser) => (existingUser?.id === currentUser.id ? existingUser : currentUser));
+      const { preferences } = await loadSyncedUserPreferences(supabase, currentUser.id);
+
+      const { data, error } = await supabase
+        .from("tracks")
+        .select("*")
+        .eq("user_id", currentUser.id)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        const offlineTracks = readOfflineTrackRecords(currentUser.id).map((track) => ({
           ...track,
-          signedUrl: signedUrlError ? undefined : signedData?.signedUrl,
-        } as Track;
-      })
-    );
-    const tracksWithOfflineInfo = await attachOfflineInfo(tracksWithUrls);
+          offlineOnly: true,
+        }));
+        const offlineTracksWithUrls = await attachOfflineInfo(offlineTracks);
+        const availableOfflineTracks = offlineTracksWithUrls.filter((track) => track.isOfflineAvailable);
 
-    replaceTracks(tracksWithOfflineInfo);
-    setTrackMetadataById(nextTrackMetadata);
-    setProfile(nextProfile);
-    setPlaylistsState(nextPlaylists);
-    setPlaylistFoldersState(nextPlaylistFolders);
-    setPlaylistCoverUrl(currentPlaylist?.coverDataUrl || null);
-    setStatus("");
-    setLoading(false);
-  }, [attachOfflineInfo, playlistId, replaceTracks, router]);
+        replaceTracks(availableOfflineTracks);
+        applySyncedPreferences(preferences);
+        setStatus(
+          availableOfflineTracks.length > 0
+            ? "Offline mode: showing downloaded songs only."
+            : "Offline mode: no downloaded songs available."
+        );
+        return;
+      }
+
+      const tracksWithUrls = await Promise.all(
+        (data || []).map(async (track) => {
+          const { data: signedData, error: signedUrlError } = await supabase.storage
+            .from("music")
+            .createSignedUrl(track.storage_path, 60 * 60);
+
+          return {
+            ...track,
+            signedUrl: signedUrlError ? undefined : signedData?.signedUrl,
+          } as Track;
+        })
+      );
+      const tracksWithOfflineInfo = await attachOfflineInfo(tracksWithUrls);
+
+      replaceTracks(tracksWithOfflineInfo);
+      applySyncedPreferences(preferences);
+
+      if (clearStatus) {
+        setStatus("");
+      }
+    } finally {
+      isLoadingDataRef.current = false;
+      setLoading(false);
+    }
+  }, [applySyncedPreferences, attachOfflineInfo, replaceTracks, router]);
 
   useEffect(() => {
     const timerId = window.setTimeout(() => {
@@ -528,6 +549,73 @@ export default function LibraryScreen({ playlistId }: Props) {
 
     return () => window.clearTimeout(timerId);
   }, [loadData]);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    const userId = user.id;
+    let isRefreshingPreferences = false;
+
+    async function refreshPreferences() {
+      if (isRefreshingPreferences || !navigator.onLine) {
+        return;
+      }
+
+      isRefreshingPreferences = true;
+
+      try {
+        const { preferences } = await loadSyncedUserPreferences(supabase, userId);
+        applySyncedPreferences(preferences);
+      } finally {
+        isRefreshingPreferences = false;
+      }
+    }
+
+    function refreshLibrary() {
+      if (!navigator.onLine) {
+        return;
+      }
+
+      void loadData({ showLoading: false, clearStatus: false });
+    }
+
+    function refreshWhenVisible() {
+      if (document.visibilityState === "visible") {
+        refreshLibrary();
+      }
+    }
+
+    const preferencesIntervalId = window.setInterval(refreshPreferences, PREFERENCES_REFRESH_INTERVAL_MS);
+    const tracksIntervalId = window.setInterval(refreshLibrary, TRACKS_REFRESH_INTERVAL_MS);
+    const realtimeChannel = supabase
+      .channel(`library-sync-${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "tracks",
+          filter: `user_id=eq.${userId}`,
+        },
+        refreshLibrary
+      )
+      .subscribe();
+
+    window.addEventListener("focus", refreshLibrary);
+    window.addEventListener("online", refreshLibrary);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      window.clearInterval(preferencesIntervalId);
+      window.clearInterval(tracksIntervalId);
+      window.removeEventListener("focus", refreshLibrary);
+      window.removeEventListener("online", refreshLibrary);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      void supabase.removeChannel(realtimeChannel);
+    };
+  }, [applySyncedPreferences, loadData, user]);
 
   function handleTrackClick(event: MouseEvent, trackId: string, index: number) {
     if (event.shiftKey) {
@@ -790,7 +878,12 @@ export default function LibraryScreen({ playlistId }: Props) {
   async function uploadTrackFiles(fileList: FileList | null) {
     const selectedFiles = Array.from(fileList || []);
 
-    if (!user || !activePlaylist || selectedFiles.length === 0) {
+    if (!user || selectedFiles.length === 0) {
+      return;
+    }
+
+    if (!activePlaylist || isAllTracksView) {
+      setStatus("Open a playlist before adding tracks.");
       return;
     }
 
@@ -798,6 +891,7 @@ export default function LibraryScreen({ playlistId }: Props) {
     setStatus(`Uploading ${selectedFiles.length} track${selectedFiles.length === 1 ? "" : "s"}...`);
 
     const insertedIds: string[] = [];
+    const insertedTracks: Track[] = [];
 
     for (const file of selectedFiles) {
       const fileTitle = file.name.replace(/\.[^/.]+$/, "");
@@ -834,23 +928,42 @@ export default function LibraryScreen({ playlistId }: Props) {
 
       if (insertedTrack?.id) {
         insertedIds.push(insertedTrack.id);
+
+        const { data: signedData, error: signedUrlError } = await supabase.storage
+          .from("music")
+          .createSignedUrl(insertedTrack.storage_path, 60 * 60);
+
+        insertedTracks.push({
+          ...insertedTrack,
+          signedUrl: signedUrlError ? undefined : signedData?.signedUrl,
+          isOfflineAvailable: false,
+        } as Track);
       }
     }
 
-    if (insertedIds.length > 0 && !isAllTracksView) {
+    if (insertedIds.length > 0) {
       const nextPlaylists = playlists.map((playlist) =>
         playlist.id === activePlaylist.id
           ? { ...playlist, trackIds: [...playlist.trackIds, ...insertedIds] }
           : playlist
       );
 
-      await persistPlaylists(nextPlaylists);
+      await persistPlaylists(
+        nextPlaylists,
+        `Added ${insertedIds.length} track${insertedIds.length === 1 ? "" : "s"} and synced.`
+      );
+    }
+
+    if (insertedTracks.length > 0) {
+      const insertedIdSet = new Set(insertedTracks.map((track) => track.id));
+      setTracks((currentTracks) => [
+        ...insertedTracks,
+        ...currentTracks.filter((track) => !insertedIdSet.has(track.id)),
+      ]);
     }
 
     if (fileInputRef.current) fileInputRef.current.value = "";
     setIsUploading(false);
-    setStatus(`Added ${insertedIds.length} track${insertedIds.length === 1 ? "" : "s"}.`);
-    void loadData();
   }
 
   function chooseTrackFile(event: ChangeEvent<HTMLInputElement>) {
@@ -962,6 +1075,37 @@ export default function LibraryScreen({ playlistId }: Props) {
 
     persistPlaylists(nextPlaylists, "Track removed from playlist and synced.");
     setOpenTrackMenuId(null);
+  }
+
+  function removeUnavailableTracksFromPlaylist() {
+    if (!user || !activePlaylist || isAllTracksView) {
+      return;
+    }
+
+    const availableTrackIds = new Set(tracks.map((track) => track.id));
+    const nextTrackIds = activePlaylist.trackIds.filter((trackId) => availableTrackIds.has(trackId));
+    const removedCount = activePlaylist.trackIds.length - nextTrackIds.length;
+
+    if (removedCount === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Remove ${removedCount} unavailable track reference${removedCount === 1 ? "" : "s"} from "${activePlaylist.name}"? This will not delete audio files.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const nextPlaylists = playlists.map((playlist) =>
+      playlist.id === activePlaylist.id ? { ...playlist, trackIds: nextTrackIds } : playlist
+    );
+
+    persistPlaylists(
+      nextPlaylists,
+      `${removedCount} unavailable track reference${removedCount === 1 ? "" : "s"} removed and synced.`
+    );
   }
 
   function reorderTrack(targetTrackId: string) {
@@ -1288,7 +1432,8 @@ export default function LibraryScreen({ playlistId }: Props) {
               {visiblePlaylists
                 .map((playlist) => {
                   const isBuiltInPlaylist = playlist.id === ALL_TRACKS_PLAYLIST_ID;
-                  const firstTrackId = playlist.trackIds.find((trackId) => tracksById.has(trackId));
+                  const availablePlaylistTracks = tracksForPlaylist(playlist);
+                  const firstTrackId = availablePlaylistTracks[0]?.id;
                   const firstCover =
                     playlist.coverDataUrl ||
                     trackMetadataById[firstTrackId || ""]?.coverDataUrl ||
@@ -1321,7 +1466,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                         <button
                           type="button"
                           onClick={() => playPlaylist(playlist)}
-                          disabled={playlist.trackIds.length === 0}
+                          disabled={availablePlaylistTracks.length === 0}
                           className="absolute bottom-2 right-2 flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-[0_12px_30px_rgba(0,0,0,0.35)] transition hover:scale-105 disabled:cursor-not-allowed disabled:opacity-50"
                           aria-label={`Play ${playlist.name}`}
                           title="Play playlist"
@@ -1332,7 +1477,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                       <div className="mt-3 flex items-start justify-between gap-2">
                         <Link href={`/library/${playlist.id}`} className="min-w-0">
                           <p className="truncate text-sm font-medium text-[var(--app-text)]">{playlist.name}</p>
-                          <p className="text-xs text-[var(--app-muted)]">{formatCount(playlist.trackIds.length)}</p>
+                          <p className="text-xs text-[var(--app-muted)]">{formatCount(availablePlaylistTracks.length)}</p>
                         </Link>
                         {!isBuiltInPlaylist ? (
                           <button
@@ -1444,7 +1589,7 @@ export default function LibraryScreen({ playlistId }: Props) {
               <div className="flex items-start justify-between gap-5">
                 <div className="min-w-0">
                   <p className="mb-2 truncate text-sm text-[var(--app-muted)]">
-                    {displayName} - {visibleTracks.length} tracks
+                    {displayName} - {visibleTracks.length} track{visibleTracks.length === 1 ? "" : "s"}
                   </p>
                   <h1 className="truncate text-4xl font-semibold leading-tight text-white sm:text-5xl">
                     {activePlaylist?.name || "Playlist"}
@@ -1518,6 +1663,21 @@ export default function LibraryScreen({ playlistId }: Props) {
                   placeholder="Search"
                   className="app-input mb-3 w-full px-3 py-2 text-sm"
                 />
+
+                {unavailableActiveTrackCount > 0 ? (
+                  <div className="mb-3 rounded-lg border border-amber-400/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+                    <p>
+                      {unavailableActiveTrackCount} track reference{unavailableActiveTrackCount === 1 ? "" : "s"} saved in this playlist did not load from Supabase.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={removeUnavailableTracksFromPlaylist}
+                      className="mt-2 text-xs font-semibold text-amber-50 underline-offset-4 hover:underline"
+                    >
+                      Remove unavailable references
+                    </button>
+                  </div>
+                ) : null}
 
                 <div className="divide-y divide-white/[0.06]">
                   {visibleTracks.map((track, index) => {

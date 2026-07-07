@@ -229,10 +229,9 @@ function mergePreferences(
             typeof preferredPlaylist?.manualOrder === "number"
               ? preferredPlaylist.manualOrder
               : fallbackPlaylist?.manualOrder ?? index,
-          trackIds: uniqueValues([
-            ...(preferredPlaylist?.trackIds || []),
-            ...(fallbackPlaylist?.trackIds || []),
-          ]),
+          trackIds: preferredPlaylist
+            ? uniqueValues(preferredPlaylist.trackIds)
+            : uniqueValues(fallbackPlaylist?.trackIds || []),
         };
       })
       .filter((playlist): playlist is Playlist => Boolean(playlist))
