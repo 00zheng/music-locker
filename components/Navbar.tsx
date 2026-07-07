@@ -14,6 +14,8 @@ import {
 import { dispatchPlayQueue } from "@/components/PlayerBridge";
 import LogoutButton from "./LogoutButton";
 
+const ALL_TRACKS_PLAYLIST_ID = "all-tracks";
+
 type SearchTrack = {
   id: string;
   title: string;
@@ -252,7 +254,7 @@ export default function Navbar() {
         id: `track-${track.id}`,
         label: title,
         detail: artist,
-        href: parentPlaylist ? `/library/${parentPlaylist.id}` : "/library",
+        href: parentPlaylist ? `/library/${parentPlaylist.id}` : `/library/${ALL_TRACKS_PLAYLIST_ID}`,
         icon: "music" as const,
         kind: "track" as const,
         artist,

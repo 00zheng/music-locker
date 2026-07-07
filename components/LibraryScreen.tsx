@@ -53,6 +53,7 @@ type OfflineTrackRecord = {
 
 const OFFLINE_AUDIO_CACHE = "music-locker-audio-v1";
 const OFFLINE_TRACKS_PREFIX = "music-locker-offline-tracks:";
+const ALL_TRACKS_PLAYLIST_ID = "all-tracks";
 
 function offlineAudioRequest(trackId: string) {
   return new Request(`/offline-audio/${trackId}`);
@@ -232,10 +233,28 @@ export default function LibraryScreen({ playlistId }: Props) {
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const offlineObjectUrlsRef = useRef<string[]>([]);
 
-  const activePlaylist = useMemo(
-    () => playlists.find((playlist) => playlist.id === playlistId) || null,
-    [playlistId, playlists]
+  const allTracksPlaylist = useMemo<Playlist>(
+    () => ({
+      id: ALL_TRACKS_PLAYLIST_ID,
+      name: "All tracks",
+      trackIds: tracks.map((track) => track.id),
+      manualOrder: -1,
+      createdAt: "",
+      coverDataUrl: null,
+      folderId: null,
+    }),
+    [tracks]
   );
+
+  const activePlaylist = useMemo(
+    () =>
+      playlistId === ALL_TRACKS_PLAYLIST_ID
+        ? allTracksPlaylist
+        : playlists.find((playlist) => playlist.id === playlistId) || null,
+    [allTracksPlaylist, playlistId, playlists]
+  );
+
+  const isAllTracksView = playlistId === ALL_TRACKS_PLAYLIST_ID;
 
   const activeTrackIds = useMemo(() => {
     if (!activePlaylist) {
@@ -296,11 +315,18 @@ export default function LibraryScreen({ playlistId }: Props) {
   }, [activePlaylist?.name, activeTrackIdSet, activeTrackOrder, playlistId, searchQuery, trackMetadataById, tracks]);
 
   const visiblePlaylists = useMemo(
-    () =>
-      playlists
+    () => {
+      const folderPlaylists = playlists
         .filter((playlist) => (playlist.folderId || null) === selectedFolderId)
-        .sort((a, b) => a.manualOrder - b.manualOrder),
-    [playlists, selectedFolderId]
+        .sort((a, b) => a.manualOrder - b.manualOrder);
+
+      if (selectedFolderId || tracks.length === 0) {
+        return folderPlaylists;
+      }
+
+      return [allTracksPlaylist, ...folderPlaylists];
+    },
+    [allTracksPlaylist, playlists, selectedFolderId, tracks.length]
   );
 
   const visibleFolders = useMemo(
@@ -488,6 +514,22 @@ export default function LibraryScreen({ playlistId }: Props) {
     }, 0);
 
     return () => window.clearTimeout(timerId);
+  }, [loadData]);
+
+  useEffect(() => {
+    function refreshVisibleLibrary() {
+      if (document.visibilityState === "visible") {
+        void loadData();
+      }
+    }
+
+    window.addEventListener("focus", refreshVisibleLibrary);
+    document.addEventListener("visibilitychange", refreshVisibleLibrary);
+
+    return () => {
+      window.removeEventListener("focus", refreshVisibleLibrary);
+      document.removeEventListener("visibilitychange", refreshVisibleLibrary);
+    };
   }, [loadData]);
 
   async function createPlaylist() {
@@ -687,7 +729,7 @@ export default function LibraryScreen({ playlistId }: Props) {
       }
     }
 
-    if (insertedIds.length > 0) {
+    if (insertedIds.length > 0 && !isAllTracksView) {
       const nextPlaylists = playlists.map((playlist) =>
         playlist.id === activePlaylist.id
           ? { ...playlist, trackIds: [...playlist.trackIds, ...insertedIds] }
@@ -710,7 +752,7 @@ export default function LibraryScreen({ playlistId }: Props) {
   async function replacePlaylistCover(event: ChangeEvent<HTMLInputElement>) {
     const selected = event.target.files?.[0];
 
-    if (!selected || !user || !activePlaylist) {
+    if (!selected || !user || !activePlaylist || isAllTracksView) {
       return;
     }
 
@@ -800,7 +842,7 @@ export default function LibraryScreen({ playlistId }: Props) {
   }
 
   function removeTrackFromPlaylist(trackId: string) {
-    if (!user || !activePlaylist) {
+    if (!user || !activePlaylist || isAllTracksView) {
       return;
     }
 
@@ -815,7 +857,7 @@ export default function LibraryScreen({ playlistId }: Props) {
   }
 
   function reorderTrack(targetTrackId: string) {
-    if (!user || !activePlaylist || !draggedTrackId || draggedTrackId === targetTrackId) {
+    if (isAllTracksView || !user || !activePlaylist || !draggedTrackId || draggedTrackId === targetTrackId) {
       setDraggedTrackId(null);
       return;
     }
@@ -1137,6 +1179,7 @@ export default function LibraryScreen({ playlistId }: Props) {
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {visiblePlaylists
                 .map((playlist) => {
+                  const isBuiltInPlaylist = playlist.id === ALL_TRACKS_PLAYLIST_ID;
                   const firstTrackId = playlist.trackIds.find((trackId) => tracksById.has(trackId));
                   const firstCover =
                     playlist.coverDataUrl ||
@@ -1146,10 +1189,10 @@ export default function LibraryScreen({ playlistId }: Props) {
                   return (
                     <div
                       key={playlist.id}
-                      draggable
-                      onDragStart={() => setDraggedPlaylistId(playlist.id)}
+                      draggable={!isBuiltInPlaylist}
+                      onDragStart={() => !isBuiltInPlaylist && setDraggedPlaylistId(playlist.id)}
                       onDragOver={(event) => event.preventDefault()}
-                      onDrop={() => groupPlaylistsIntoFolder(playlist.id)}
+                      onDrop={() => !isBuiltInPlaylist && groupPlaylistsIntoFolder(playlist.id)}
                       onDragEnd={() => setDraggedPlaylistId(null)}
                       className={`app-card relative overflow-hidden p-3 ${
                         draggedPlaylistId === playlist.id ? "opacity-45" : ""
@@ -1183,17 +1226,19 @@ export default function LibraryScreen({ playlistId }: Props) {
                           <p className="truncate text-sm font-medium text-[var(--app-text)]">{playlist.name}</p>
                           <p className="text-xs text-[var(--app-muted)]">{formatCount(playlist.trackIds.length)}</p>
                         </Link>
-                        <button
-                          type="button"
-                          onClick={() => setOpenPlaylistMenuId((current) => (current === playlist.id ? null : playlist.id))}
-                          className="rounded-full px-2 text-lg leading-none text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
-                          aria-label={`Open menu for ${playlist.name}`}
-                        >
-                          ...
-                        </button>
+                        {!isBuiltInPlaylist ? (
+                          <button
+                            type="button"
+                            onClick={() => setOpenPlaylistMenuId((current) => (current === playlist.id ? null : playlist.id))}
+                            className="rounded-full px-2 text-lg leading-none text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
+                            aria-label={`Open menu for ${playlist.name}`}
+                          >
+                            ...
+                          </button>
+                        ) : null}
                       </div>
 
-                      {openPlaylistMenuId === playlist.id ? (
+                      {openPlaylistMenuId === playlist.id && !isBuiltInPlaylist ? (
                         <div className="absolute right-2 top-2 z-30 w-56 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.86)] p-2 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl">
                           <button
                             type="button"
@@ -1264,7 +1309,9 @@ export default function LibraryScreen({ playlistId }: Props) {
 
           <div className="grid gap-10 lg:grid-cols-[minmax(280px,420px)_1fr] lg:items-start">
             <div className="mx-auto w-full max-w-64 sm:max-w-80 lg:sticky lg:top-8 lg:max-w-none">
-              <label className="group relative block aspect-square cursor-pointer overflow-hidden rounded-[18px] bg-[var(--app-glass)] shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+              <label className={`group relative block aspect-square overflow-hidden rounded-[18px] bg-[var(--app-glass)] shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl ${
+                isAllTracksView ? "cursor-default" : "cursor-pointer"
+              }`}>
                 {playlistCoverUrl ? (
                   <img
                     src={playlistCoverUrl}
@@ -1277,9 +1324,11 @@ export default function LibraryScreen({ playlistId }: Props) {
                   </div>
                 )}
                 <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent px-5 pb-5 pt-16 text-center text-sm font-medium text-white opacity-95">
-                  Change cover art
+                  {isAllTracksView ? "Synced tracks" : "Change cover art"}
                 </span>
-                <input ref={coverInputRef} type="file" accept="image/*" onChange={replacePlaylistCover} className="hidden" />
+                {!isAllTracksView ? (
+                  <input ref={coverInputRef} type="file" accept="image/*" onChange={replacePlaylistCover} className="hidden" />
+                ) : null}
               </label>
             </div>
 
@@ -1344,8 +1393,8 @@ export default function LibraryScreen({ playlistId }: Props) {
                   return (
                     <div
                         key={track.id}
-                        draggable={renamingTrackId !== track.id}
-                        onDragStart={() => setDraggedTrackId(track.id)}
+                        draggable={!isAllTracksView && renamingTrackId !== track.id}
+                        onDragStart={() => !isAllTracksView && setDraggedTrackId(track.id)}
                         onDragOver={(event) => event.preventDefault()}
                         onDrop={() => reorderTrack(track.id)}
                         onDragEnd={() => setDraggedTrackId(null)}
@@ -1459,13 +1508,15 @@ export default function LibraryScreen({ playlistId }: Props) {
                                 Download offline
                               </button>
                             )}
-                            <button
-                              type="button"
-                              onClick={() => removeTrackFromPlaylist(track.id)}
-                              className="block w-full px-3 py-2 text-left text-red-300 hover:bg-white/[0.08]"
-                            >
-                              Delete from playlist
-                            </button>
+                            {!isAllTracksView ? (
+                              <button
+                                type="button"
+                                onClick={() => removeTrackFromPlaylist(track.id)}
+                                className="block w-full px-3 py-2 text-left text-red-300 hover:bg-white/[0.08]"
+                              >
+                                Delete from playlist
+                              </button>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>
