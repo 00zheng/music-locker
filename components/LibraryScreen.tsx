@@ -342,6 +342,7 @@ export default function LibraryScreen({ playlistId }: Props) {
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const offlineObjectUrlsRef = useRef<string[]>([]);
   const isLoadingDataRef = useRef(false);
+  const isSavingPreferencesRef = useRef(false);
   const pendingPlaylistCoversRef = useRef<Record<string, string>>({});
 
   const allTracksPlaylist = useMemo<Playlist>(
@@ -531,16 +532,24 @@ export default function LibraryScreen({ playlistId }: Props) {
       return Promise.resolve();
     }
 
-    return saveSyncedUserPreferences(supabase, user.id, value).then(({ error }) => {
-      if (error) {
-        setStatus(`Saved on this device. Cloud sync failed: ${error.message}`);
-        return;
-      }
+    isSavingPreferencesRef.current = true;
 
-      if (successMessage) {
-        setStatus(successMessage);
-      }
-    });
+    return saveSyncedUserPreferences(supabase, user.id, value)
+      .then(({ preferences, error }) => {
+        if (error) {
+          setStatus(`Saved on this device. Cloud sync failed: ${error.message}`);
+          return;
+        }
+
+        applySyncedPreferences(preferences, playlistCoverUrlsById);
+
+        if (successMessage) {
+          setStatus(successMessage);
+        }
+      })
+      .finally(() => {
+        isSavingPreferencesRef.current = false;
+      });
   }
 
   function persistPlaylists(nextPlaylists: Playlist[], successMessage?: string) {
@@ -572,7 +581,7 @@ export default function LibraryScreen({ playlistId }: Props) {
   }
 
   const loadData = useCallback(async (options: LoadDataOptions = {}) => {
-    if (isLoadingDataRef.current) {
+    if (isLoadingDataRef.current || isSavingPreferencesRef.current) {
       return;
     }
 
@@ -670,7 +679,7 @@ export default function LibraryScreen({ playlistId }: Props) {
     let isRefreshingPreferences = false;
 
     async function refreshPreferences() {
-      if (isRefreshingPreferences || !navigator.onLine) {
+      if (isRefreshingPreferences || isSavingPreferencesRef.current || !navigator.onLine) {
         return;
       }
 
@@ -686,7 +695,7 @@ export default function LibraryScreen({ playlistId }: Props) {
     }
 
     function refreshLibrary() {
-      if (!navigator.onLine) {
+      if (isSavingPreferencesRef.current || !navigator.onLine) {
         return;
       }
 

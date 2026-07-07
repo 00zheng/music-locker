@@ -219,9 +219,9 @@ function mergePreferences(
     ...preferredPreferences.deletedPlaylistFolderIds,
     ...fallbackPreferences.deletedPlaylistFolderIds,
   ]);
-  const playlistIds = uniqueValues(preferredPreferences.playlists.map((playlist) => playlist.id))
+  const playlistIds = uniqueValues(remotePreferences.playlists.map((playlist) => playlist.id))
     .filter((playlistId) => !deletedPlaylistIds.includes(playlistId));
-  const folderIds = uniqueValues(preferredPreferences.playlistFolders.map((folder) => folder.id))
+  const folderIds = uniqueValues(remotePreferences.playlistFolders.map((folder) => folder.id))
     .filter((folderId) => !deletedPlaylistFolderIds.includes(folderId));
 
   return normalizePreferences({
@@ -238,9 +238,15 @@ function mergePreferences(
     },
     playlists: playlistIds
       .flatMap((playlistId, index): Playlist[] => {
-        const preferredPlaylist = preferredPreferences.playlists.find((playlist) => playlist.id === playlistId);
-        const fallbackPlaylist = fallbackPreferences.playlists.find((playlist) => playlist.id === playlistId);
-        const playlist = preferredPlaylist || fallbackPlaylist;
+        const remotePlaylist = remotePreferences.playlists.find((playlist) => playlist.id === playlistId);
+        const localPlaylist = localPreferences.playlists.find((playlist) => playlist.id === playlistId);
+        const preferredPlaylist =
+          preferredPreferences.playlists.find((playlist) => playlist.id === playlistId) ||
+          remotePlaylist;
+        const fallbackPlaylist =
+          fallbackPreferences.playlists.find((playlist) => playlist.id === playlistId) ||
+          localPlaylist;
+        const playlist = remotePlaylist || preferredPlaylist || fallbackPlaylist;
 
         if (!playlist) {
           return [];
@@ -272,6 +278,7 @@ function mergePreferences(
     playlistFolders: folderIds
       .map((folderId, index) => {
         const folder =
+          remotePreferences.playlistFolders.find((currentFolder) => currentFolder.id === folderId) ||
           preferredPreferences.playlistFolders.find((currentFolder) => currentFolder.id === folderId) ||
           fallbackPreferences.playlistFolders.find((currentFolder) => currentFolder.id === folderId);
 
