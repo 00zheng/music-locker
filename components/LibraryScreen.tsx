@@ -529,22 +529,6 @@ export default function LibraryScreen({ playlistId }: Props) {
     return () => window.clearTimeout(timerId);
   }, [loadData]);
 
-  useEffect(() => {
-    function refreshVisibleLibrary() {
-      if (document.visibilityState === "visible") {
-        void loadData();
-      }
-    }
-
-    window.addEventListener("focus", refreshVisibleLibrary);
-    document.addEventListener("visibilitychange", refreshVisibleLibrary);
-
-    return () => {
-      window.removeEventListener("focus", refreshVisibleLibrary);
-      document.removeEventListener("visibilitychange", refreshVisibleLibrary);
-    };
-  }, [loadData]);
-
   function handleTrackClick(event: MouseEvent, trackId: string, index: number) {
     if (event.shiftKey) {
       event.preventDefault();
@@ -866,7 +850,7 @@ export default function LibraryScreen({ playlistId }: Props) {
     if (fileInputRef.current) fileInputRef.current.value = "";
     setIsUploading(false);
     setStatus(`Added ${insertedIds.length} track${insertedIds.length === 1 ? "" : "s"}.`);
-    await loadData();
+    void loadData();
   }
 
   function chooseTrackFile(event: ChangeEvent<HTMLInputElement>) {
@@ -1491,7 +1475,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading}
+                  disabled={loading || isUploading || !user || !activePlaylist}
                   className="flex h-11 w-full items-center justify-center rounded-xl bg-[var(--app-glass)] text-sm font-semibold text-white backdrop-blur transition hover:bg-[var(--app-glass-strong)]"
                 >
                   {isUploading ? "Uploading..." : "+ Add tracks"}
