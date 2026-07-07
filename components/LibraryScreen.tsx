@@ -261,7 +261,7 @@ function InlineIcon({
   name,
   className = "h-4 w-4",
 }: {
-  name: "play" | "folder" | "add" | "back";
+  name: "play" | "folder" | "add" | "back" | "more";
   className?: string;
 }) {
   return (
@@ -281,6 +281,12 @@ function InlineIcon({
         <>
           <path d="m15 18-6-6 6-6" />
           <path d="M9 12h12" />
+        </>
+      ) : name === "more" ? (
+        <>
+          <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+          <circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" />
         </>
       ) : name === "add" ? (
         <>
@@ -996,7 +1002,16 @@ export default function LibraryScreen({ playlistId }: Props) {
       playlist.folderId === folderId ? { ...playlist, folderId: null } : playlist
     );
 
-    persistPlaylistsAndFolders(nextPlaylists, nextFolders, "Folder deleted. Playlists moved to library.");
+    setPlaylistsState(nextPlaylists);
+    setPlaylistFoldersState(nextFolders);
+    persistSyncedPreferences(
+      {
+        playlists: nextPlaylists,
+        playlistFolders: nextFolders,
+        deletedPlaylistFolderIds: [folderId],
+      },
+      "Folder deleted. Playlists moved to library."
+    );
     setSelectedFolderId(null);
   }
 
@@ -1019,7 +1034,14 @@ export default function LibraryScreen({ playlistId }: Props) {
         manualOrder: index,
       }));
 
-    persistPlaylists(nextPlaylists, "Playlist deleted and synced.");
+    setPlaylistsState(nextPlaylists);
+    persistSyncedPreferences(
+      {
+        playlists: nextPlaylists,
+        deletedPlaylistIds: [playlist.id],
+      },
+      "Playlist deleted and synced."
+    );
     setOpenPlaylistMenuId(null);
   }
 
@@ -1618,8 +1640,10 @@ export default function LibraryScreen({ playlistId }: Props) {
                       onDragOver={(event) => event.preventDefault()}
                       onDrop={() => !isBuiltInPlaylist && groupPlaylistsIntoFolder(playlist.id)}
                       onDragEnd={() => setDraggedPlaylistId(null)}
-                      className={`app-card relative overflow-hidden p-3 ${
+                      className={`app-card relative p-3 ${
                         draggedPlaylistId === playlist.id ? "opacity-45" : ""
+                      } ${
+                        openPlaylistMenuId === playlist.id ? "z-40" : ""
                       }`}
                     >
                       <div className="group relative">
@@ -1658,16 +1682,17 @@ export default function LibraryScreen({ playlistId }: Props) {
                               setRenamingPlaylistId(null);
                               setPlaylistRenameValue("");
                             }}
-                            className="rounded-full px-2 text-lg leading-none text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
                             aria-label={`Open menu for ${playlist.name}`}
+                            title="Playlist menu"
                           >
-                            ...
+                            <InlineIcon name="more" className="h-5 w-5" />
                           </button>
                         ) : null}
                       </div>
 
                       {openPlaylistMenuId === playlist.id && !isBuiltInPlaylist ? (
-                        <div className="absolute right-2 top-2 z-30 w-56 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.86)] p-2 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+                        <div className="relative z-30 mt-3 w-full overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.86)] p-2 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:absolute sm:right-2 sm:top-2 sm:mt-0 sm:w-56">
                           <button
                             type="button"
                             onClick={() => addPlaylistToQueue(playlist)}
@@ -1979,10 +2004,11 @@ export default function LibraryScreen({ playlistId }: Props) {
                         <button
                           type="button"
                           onClick={() => setOpenTrackMenuId((currentTrackId) => (currentTrackId === track.id ? null : track.id))}
-                          className="rounded-full px-3 py-1 text-lg leading-none text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
                           aria-label={`Open menu for ${displayTitle}`}
+                          title="Track menu"
                         >
-                          ...
+                          <InlineIcon name="more" className="h-5 w-5" />
                         </button>
 
                         {openTrackMenuId === track.id ? (
