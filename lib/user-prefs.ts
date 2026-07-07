@@ -199,12 +199,28 @@ function uniqueValues(values: string[]) {
   return Array.from(new Set(values));
 }
 
+function parseTimestamp(value: string) {
+  const timestamp = Date.parse(value);
+
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function isNewerLocalOnlyItem(
+  item: { createdAt: string },
+  localTimestamp: number,
+  remoteTimestamp: number
+) {
+  return localTimestamp > remoteTimestamp && parseTimestamp(item.createdAt) > remoteTimestamp;
+}
+
 function mergePreferences(
   localPreferences: SyncedUserPreferences,
   remotePreferences: SyncedUserPreferences
 ) {
   const localTimestamp = Date.parse(localPreferences.updatedAt);
   const remoteTimestamp = Date.parse(remotePreferences.updatedAt);
+  const safeLocalTimestamp = Number.isFinite(localTimestamp) ? localTimestamp : 0;
+  const safeRemoteTimestamp = Number.isFinite(remoteTimestamp) ? remoteTimestamp : 0;
   const preferLocal =
     Number.isFinite(localTimestamp) &&
     Number.isFinite(remoteTimestamp) &&
@@ -219,17 +235,35 @@ function mergePreferences(
     ...preferredPreferences.deletedPlaylistFolderIds,
     ...fallbackPreferences.deletedPlaylistFolderIds,
   ]);
-  const playlistIds = uniqueValues(remotePreferences.playlists.map((playlist) => playlist.id))
-    .filter((playlistId) => !deletedPlaylistIds.includes(playlistId));
-  const folderIds = uniqueValues(remotePreferences.playlistFolders.map((folder) => folder.id))
-    .filter((folderId) => !deletedPlaylistFolderIds.includes(folderId));
+  const remotePlaylistIds = remotePreferences.playlists.map((playlist) => playlist.id);
+  const localOnlyPlaylistIds = localPreferences.playlists
+    .filter(
+      (playlist) =>
+        !remotePlaylistIds.includes(playlist.id) &&
+        isNewerLocalOnlyItem(playlist, safeLocalTimestamp, safeRemoteTimestamp)
+    )
+    .map((playlist) => playlist.id);
+  const remoteFolderIds = remotePreferences.playlistFolders.map((folder) => folder.id);
+  const localOnlyFolderIds = localPreferences.playlistFolders
+    .filter(
+      (folder) =>
+        !remoteFolderIds.includes(folder.id) &&
+        isNewerLocalOnlyItem(folder, safeLocalTimestamp, safeRemoteTimestamp)
+    )
+    .map((folder) => folder.id);
+  const playlistIds = uniqueValues([...remotePlaylistIds, ...localOnlyPlaylistIds]).filter(
+    (playlistId) => !deletedPlaylistIds.includes(playlistId)
+  );
+  const folderIds = uniqueValues([...remoteFolderIds, ...localOnlyFolderIds]).filter(
+    (folderId) => !deletedPlaylistFolderIds.includes(folderId)
+  );
 
   return normalizePreferences({
     ...preferredPreferences,
     updatedAt: new Date(
       Math.max(
-        Number.isFinite(localTimestamp) ? localTimestamp : 0,
-        Number.isFinite(remoteTimestamp) ? remoteTimestamp : 0
+        safeLocalTimestamp,
+        safeRemoteTimestamp
       )
     ).toISOString(),
     trackMetadata: {
@@ -507,10 +541,27 @@ export async function saveSyncedUserPreferences(
   value: Partial<SyncedUserPreferences>
 ) {
   const currentPreferences = localUserPreferences(userId);
+  const optimisticUpdatedAt = new Date().toISOString();
+  const optimisticPreferences = normalizePreferences({
+    ...currentPreferences,
+    ...value,
+    updatedAt: optimisticUpdatedAt,
+    deletedPlaylistIds: uniqueValues([
+      ...currentPreferences.deletedPlaylistIds,
+      ...(value.deletedPlaylistIds || []),
+    ]),
+    deletedPlaylistFolderIds: uniqueValues([
+      ...currentPreferences.deletedPlaylistFolderIds,
+      ...(value.deletedPlaylistFolderIds || []),
+    ]),
+  });
+
+  writeLocalUserPreferences(userId, optimisticPreferences);
+
   const remotePreferences = await downloadSyncedUserPreferences(supabase, userId);
   const basePreferences = remotePreferences
-    ? mergePreferences(currentPreferences, remotePreferences)
-    : currentPreferences;
+    ? mergePreferences(optimisticPreferences, remotePreferences)
+    : optimisticPreferences;
   const deletedPlaylistIds = uniqueValues([
     ...basePreferences.deletedPlaylistIds,
     ...(value.deletedPlaylistIds || []),
