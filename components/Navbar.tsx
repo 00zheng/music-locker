@@ -15,6 +15,7 @@ import { dispatchPlayQueue } from "@/components/PlayerBridge";
 import LogoutButton from "./LogoutButton";
 
 const NAVBAR_REFRESH_INTERVAL_MS = 15000;
+const PLAYLIST_COVER_SIGNED_URL_SECONDS = 60 * 60;
 
 type SearchTrack = {
   id: string;
@@ -45,8 +46,36 @@ type TrackSearchResult = BaseSearchResult & {
 
 type SearchResult = LinkSearchResult | TrackSearchResult;
 
+type PlaylistCoverUrlsById = Record<string, string>;
+
 function normalizeSearchValue(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function playlistCoverSource(playlist: Playlist | null | undefined, signedUrlsById: PlaylistCoverUrlsById) {
+  if (!playlist) {
+    return null;
+  }
+
+  return signedUrlsById[playlist.id] || playlist.coverDataUrl || null;
+}
+
+async function createPlaylistCoverUrls(playlists: Playlist[]) {
+  const coverEntries = await Promise.all(
+    playlists
+      .filter((playlist) => Boolean(playlist.coverStoragePath))
+      .map(async (playlist) => {
+        const { data, error } = await supabase.storage
+          .from("music")
+          .createSignedUrl(playlist.coverStoragePath as string, PLAYLIST_COVER_SIGNED_URL_SECONDS);
+
+        return !error && data?.signedUrl ? ([playlist.id, data.signedUrl] as const) : null;
+      })
+  );
+
+  return Object.fromEntries(
+    coverEntries.filter((entry): entry is readonly [string, string] => Boolean(entry))
+  );
 }
 
 function NavIcon({
@@ -149,6 +178,7 @@ export default function Navbar() {
   const [username, setUsername] = useState("");
   const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null);
   const [playlists, setPlaylistsState] = useState<Playlist[]>([]);
+  const [playlistCoverUrlsById, setPlaylistCoverUrlsById] = useState<PlaylistCoverUrlsById>({});
   const [trackMetadataById, setTrackMetadataById] = useState<TrackMetadataById>({});
   const [tracks, setTracks] = useState<SearchTrack[]>([]);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -176,6 +206,9 @@ export default function Navbar() {
         }
 
         const { preferences } = await loadSyncedUserPreferences(supabase, userId);
+        const signedCoverUrlsById = navigator.onLine
+          ? await createPlaylistCoverUrls(preferences.playlists)
+          : {};
 
         if (!isMounted) {
           return;
@@ -184,6 +217,7 @@ export default function Navbar() {
         setUsername(preferences.profile.username || "");
         setAvatarDataUrl(preferences.profile.avatarDataUrl || null);
         setPlaylistsState(preferences.playlists);
+        setPlaylistCoverUrlsById(signedCoverUrlsById);
         setTrackMetadataById(preferences.trackMetadata);
 
         const { data: trackData } = await supabase
@@ -314,7 +348,7 @@ export default function Navbar() {
         icon: "music" as const,
         kind: "track" as const,
         artist,
-        coverDataUrl: metadata?.coverDataUrl || parentPlaylist?.coverDataUrl || null,
+        coverDataUrl: metadata?.coverDataUrl || playlistCoverSource(parentPlaylist, playlistCoverUrlsById),
         storagePath: track.storage_path,
         trackId: track.id,
       });
@@ -329,7 +363,7 @@ export default function Navbar() {
     return results
       .filter((result) => `${result.label} ${result.detail}`.toLowerCase().includes(query))
       .slice(0, 12);
-  }, [playlists, searchQuery, trackMetadataById, tracks]);
+  }, [playlistCoverUrlsById, playlists, searchQuery, trackMetadataById, tracks]);
 
   async function playSearchTrack(result: TrackSearchResult) {
     setIsSearchOpen(false);

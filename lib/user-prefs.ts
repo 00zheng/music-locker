@@ -34,6 +34,7 @@ export type Playlist = {
   manualOrder: number;
   createdAt: string;
   coverDataUrl?: string | null;
+  coverStoragePath?: string | null;
   folderId?: string | null;
 };
 
@@ -151,7 +152,8 @@ function normalizePreferences(value: Partial<SyncedUserPreferences>): SyncedUser
           manualOrder:
             typeof playlist.manualOrder === "number" ? playlist.manualOrder : index,
           trackIds: Array.isArray(playlist.trackIds) ? playlist.trackIds : [],
-          coverDataUrl: playlist.coverDataUrl || null,
+          coverDataUrl: playlist.coverStoragePath ? null : playlist.coverDataUrl || null,
+          coverStoragePath: playlist.coverStoragePath || null,
           folderId: playlist.folderId || null,
         }))
       : [],
@@ -215,16 +217,19 @@ function mergePreferences(
       ...preferredPreferences.trackMetadata,
     },
     playlists: playlistIds
-      .map((playlistId, index) => {
+      .flatMap((playlistId, index): Playlist[] => {
         const preferredPlaylist = preferredPreferences.playlists.find((playlist) => playlist.id === playlistId);
         const fallbackPlaylist = fallbackPreferences.playlists.find((playlist) => playlist.id === playlistId);
         const playlist = preferredPlaylist || fallbackPlaylist;
 
         if (!playlist) {
-          return null;
+          return [];
         }
 
-        return {
+        const coverStoragePath =
+          preferredPlaylist?.coverStoragePath || fallbackPlaylist?.coverStoragePath || null;
+
+        return [{
           ...playlist,
           manualOrder:
             typeof preferredPlaylist?.manualOrder === "number"
@@ -233,9 +238,12 @@ function mergePreferences(
           trackIds: preferredPlaylist
             ? uniqueValues(preferredPlaylist.trackIds)
             : uniqueValues(fallbackPlaylist?.trackIds || []),
-        };
+          coverDataUrl: coverStoragePath
+            ? null
+            : preferredPlaylist?.coverDataUrl || fallbackPlaylist?.coverDataUrl || null,
+          coverStoragePath,
+        }];
       })
-      .filter((playlist): playlist is Playlist => Boolean(playlist))
       .sort((a, b) => a.manualOrder - b.manualOrder),
     playlistFolders: folderIds
       .map((folderId, index) => {
@@ -325,7 +333,8 @@ export function getPlaylists(userId: string) {
     manualOrder:
       typeof playlist.manualOrder === "number" ? playlist.manualOrder : index,
     trackIds: Array.isArray(playlist.trackIds) ? playlist.trackIds : [],
-    coverDataUrl: playlist.coverDataUrl || null,
+    coverDataUrl: playlist.coverStoragePath ? null : playlist.coverDataUrl || null,
+    coverStoragePath: playlist.coverStoragePath || null,
     folderId: playlist.folderId || null,
   }));
 }

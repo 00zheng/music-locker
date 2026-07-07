@@ -58,11 +58,14 @@ const PREFERENCES_REFRESH_INTERVAL_MS = 8000;
 const TRACKS_REFRESH_INTERVAL_MS = 30000;
 const PLAYLIST_COVER_SIZE = 800;
 const PLAYLIST_COVER_QUALITY = 0.82;
+const PLAYLIST_COVER_SIGNED_URL_SECONDS = 60 * 60;
 
 type LoadDataOptions = {
   showLoading?: boolean;
   clearStatus?: boolean;
 };
+
+type PlaylistCoverUrlsById = Record<string, string>;
 
 function offlineAudioRequest(trackId: string) {
   return new Request(`/offline-audio/${trackId}`);
@@ -131,7 +134,37 @@ async function getCachedAudioUrl(trackId: string) {
   return URL.createObjectURL(await response.blob());
 }
 
-async function imageFileToPlaylistCoverDataUrl(file: File) {
+function playlistCoverStoragePath(userId: string, playlistId: string) {
+  return `${userId}/.music-locker/playlist-covers/${playlistId}-${Date.now()}.jpg`;
+}
+
+function playlistCoverSource(playlist: Playlist | null | undefined, signedUrlsById: PlaylistCoverUrlsById) {
+  if (!playlist) {
+    return null;
+  }
+
+  return signedUrlsById[playlist.id] || playlist.coverDataUrl || null;
+}
+
+async function createPlaylistCoverUrls(playlists: Playlist[]) {
+  const coverEntries = await Promise.all(
+    playlists
+      .filter((playlist) => Boolean(playlist.coverStoragePath))
+      .map(async (playlist) => {
+        const { data, error } = await supabase.storage
+          .from("music")
+          .createSignedUrl(playlist.coverStoragePath as string, PLAYLIST_COVER_SIGNED_URL_SECONDS);
+
+        return !error && data?.signedUrl ? ([playlist.id, data.signedUrl] as const) : null;
+      })
+  );
+
+  return Object.fromEntries(
+    coverEntries.filter((entry): entry is readonly [string, string] => Boolean(entry))
+  );
+}
+
+async function imageFileToPlaylistCoverBlob(file: File) {
   if (!file.type.startsWith("image/")) {
     throw new Error("Cover art must be an image.");
   }
@@ -176,7 +209,20 @@ async function imageFileToPlaylistCoverDataUrl(file: File) {
       canvas.height
     );
 
-    return canvas.toDataURL("image/jpeg", PLAYLIST_COVER_QUALITY);
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve(blob);
+            return;
+          }
+
+          reject(new Error("Could not prepare cover art."));
+        },
+        "image/jpeg",
+        PLAYLIST_COVER_QUALITY
+      );
+    });
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
@@ -258,6 +304,7 @@ export default function LibraryScreen({ playlistId }: Props) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylistsState] = useState<Playlist[]>([]);
   const [playlistFolders, setPlaylistFoldersState] = useState<PlaylistFolder[]>([]);
+  const [playlistCoverUrlsById, setPlaylistCoverUrlsById] = useState<PlaylistCoverUrlsById>({});
   const [trackMetadataById, setTrackMetadataById] = useState<TrackMetadataById>({});
   const [profile, setProfile] = useState<UserProfilePreferences>({
     username: "",
@@ -299,6 +346,7 @@ export default function LibraryScreen({ playlistId }: Props) {
       manualOrder: -1,
       createdAt: "",
       coverDataUrl: null,
+      coverStoragePath: null,
       folderId: null,
     }),
     [tracks]
@@ -450,7 +498,10 @@ export default function LibraryScreen({ playlistId }: Props) {
     return tracksWithOfflineInfo;
   }, []);
 
-  const applySyncedPreferences = useCallback((preferences: SyncedUserPreferences) => {
+  const applySyncedPreferences = useCallback((
+    preferences: SyncedUserPreferences,
+    signedCoverUrlsById: PlaylistCoverUrlsById = {}
+  ) => {
     const currentPlaylist = playlistId
       ? preferences.playlists.find((playlist) => playlist.id === playlistId)
       : null;
@@ -460,7 +511,10 @@ export default function LibraryScreen({ playlistId }: Props) {
     setProfile(preferences.profile);
     setPlaylistsState(preferences.playlists);
     setPlaylistFoldersState(preferences.playlistFolders);
-    setPlaylistCoverUrl(pendingCoverUrl || currentPlaylist?.coverDataUrl || null);
+    setPlaylistCoverUrlsById(signedCoverUrlsById);
+    setPlaylistCoverUrl(
+      pendingCoverUrl || playlistCoverSource(currentPlaylist, signedCoverUrlsById)
+    );
   }, [playlistId]);
 
   function persistSyncedPreferences(
@@ -539,6 +593,9 @@ export default function LibraryScreen({ playlistId }: Props) {
 
       setUser((existingUser) => (existingUser?.id === currentUser.id ? existingUser : currentUser));
       const { preferences } = await loadSyncedUserPreferences(supabase, currentUser.id);
+      const signedCoverUrlsById = navigator.onLine
+        ? await createPlaylistCoverUrls(preferences.playlists)
+        : {};
 
       const { data, error } = await supabase
         .from("tracks")
@@ -555,7 +612,7 @@ export default function LibraryScreen({ playlistId }: Props) {
         const availableOfflineTracks = offlineTracksWithUrls.filter((track) => track.isOfflineAvailable);
 
         replaceTracks(availableOfflineTracks);
-        applySyncedPreferences(preferences);
+        applySyncedPreferences(preferences, signedCoverUrlsById);
         setStatus(
           availableOfflineTracks.length > 0
             ? "Offline mode: showing downloaded songs only."
@@ -579,7 +636,7 @@ export default function LibraryScreen({ playlistId }: Props) {
       const tracksWithOfflineInfo = await attachOfflineInfo(tracksWithUrls);
 
       replaceTracks(tracksWithOfflineInfo);
-      applySyncedPreferences(preferences);
+      applySyncedPreferences(preferences, signedCoverUrlsById);
 
       if (clearStatus) {
         setStatus("");
@@ -615,7 +672,8 @@ export default function LibraryScreen({ playlistId }: Props) {
 
       try {
         const { preferences } = await loadSyncedUserPreferences(supabase, userId);
-        applySyncedPreferences(preferences);
+        const signedCoverUrlsById = await createPlaylistCoverUrls(preferences.playlists);
+        applySyncedPreferences(preferences, signedCoverUrlsById);
       } finally {
         isRefreshingPreferences = false;
       }
@@ -805,6 +863,7 @@ export default function LibraryScreen({ playlistId }: Props) {
         manualOrder: playlists.length,
         createdAt: new Date().toISOString(),
         coverDataUrl: null,
+        coverStoragePath: null,
         folderId: selectedFolderId,
       },
     ];
@@ -1069,17 +1128,49 @@ export default function LibraryScreen({ playlistId }: Props) {
     setStatus("Updating cover art...");
 
     try {
-      const dataUrl = await imageFileToPlaylistCoverDataUrl(selected);
+      const coverBlob = await imageFileToPlaylistCoverBlob(selected);
+      const storagePath = playlistCoverStoragePath(user.id, activePlaylist.id);
+      const previousCoverStoragePath = activePlaylist.coverStoragePath;
+      const { error: uploadError } = await supabase.storage
+        .from("music")
+        .upload(storagePath, coverBlob, {
+          cacheControl: "31536000",
+          contentType: "image/jpeg",
+        });
+
+      if (uploadError) {
+        throw new Error(uploadError.message);
+      }
+
+      const { data: signedData, error: signedUrlError } = await supabase.storage
+        .from("music")
+        .createSignedUrl(storagePath, PLAYLIST_COVER_SIGNED_URL_SECONDS);
+
+      if (signedUrlError || !signedData?.signedUrl) {
+        throw new Error(signedUrlError?.message || "Could not load the saved cover art.");
+      }
+
+      const coverUrl = signedData.signedUrl;
       const nextPlaylists = playlists.map((playlist) =>
         playlist.id === activePlaylist.id
-          ? { ...playlist, coverDataUrl: dataUrl }
+          ? { ...playlist, coverDataUrl: null, coverStoragePath: storagePath }
           : playlist
       );
-      const coverSizeKb = Math.max(1, Math.round(dataUrl.length / 1024));
+      const coverSizeKb = Math.max(1, Math.round(coverBlob.size / 1024));
 
-      pendingPlaylistCoversRef.current[activePlaylist.id] = dataUrl;
-      setPlaylistCoverUrl(dataUrl);
+      pendingPlaylistCoversRef.current[activePlaylist.id] = coverUrl;
+      setPlaylistCoverUrlsById((currentUrls) => ({
+        ...currentUrls,
+        [activePlaylist.id]: coverUrl,
+      }));
+      setPlaylistCoverUrl(coverUrl);
+
       await persistPlaylists(nextPlaylists, `Cover updated and synced (${coverSizeKb} KB).`);
+      delete pendingPlaylistCoversRef.current[activePlaylist.id];
+
+      if (previousCoverStoragePath && previousCoverStoragePath !== storagePath) {
+        void supabase.storage.from("music").remove([previousCoverStoragePath]);
+      }
     } catch (error) {
       delete pendingPlaylistCoversRef.current[activePlaylist.id];
       setStatus(error instanceof Error ? error.message : "Could not update cover art.");
@@ -1089,11 +1180,14 @@ export default function LibraryScreen({ playlistId }: Props) {
   }
 
   function playerTrackFromTrack(track: Track, playlist?: Playlist | null) {
+    const playlistCoverUrl = playlistCoverSource(playlist, playlistCoverUrlsById);
+    const activePlaylistCoverUrl = playlistCoverSource(activePlaylist, playlistCoverUrlsById);
+
     return {
       id: track.id,
       title: trackMetadataById[track.id]?.title || track.title,
       artist: trackMetadataById[track.id]?.artist || track.artist || playlist?.name || activePlaylist?.name || "Unknown artist",
-      coverDataUrl: trackMetadataById[track.id]?.coverDataUrl || playlist?.coverDataUrl || activePlaylist?.coverDataUrl || null,
+      coverDataUrl: trackMetadataById[track.id]?.coverDataUrl || playlistCoverUrl || activePlaylistCoverUrl,
       audioUrl: track.offlineUrl || track.signedUrl || "",
     };
   }
@@ -1456,7 +1550,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                       const firstTrackId = playlist.trackIds.find((trackId) => tracksById.has(trackId));
 
                       return (
-                        playlist.coverDataUrl ||
+                        playlistCoverSource(playlist, playlistCoverUrlsById) ||
                         trackMetadataById[firstTrackId || ""]?.coverDataUrl ||
                         null
                       );
@@ -1512,7 +1606,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                   const availablePlaylistTracks = tracksForPlaylist(playlist);
                   const firstTrackId = availablePlaylistTracks[0]?.id;
                   const firstCover =
-                    playlist.coverDataUrl ||
+                    playlistCoverSource(playlist, playlistCoverUrlsById) ||
                     trackMetadataById[firstTrackId || ""]?.coverDataUrl ||
                     null;
 
