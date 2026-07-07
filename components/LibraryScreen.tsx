@@ -601,6 +601,16 @@ export default function LibraryScreen({ playlistId }: Props) {
         },
         refreshLibrary
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "sync_events",
+          filter: `user_id=eq.${userId}`,
+        },
+        refreshLibrary
+      )
       .subscribe();
 
     window.addEventListener("focus", refreshLibrary);

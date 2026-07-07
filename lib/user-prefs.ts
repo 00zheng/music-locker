@@ -63,6 +63,7 @@ const PLAYLIST_PREFIX = "music-locker-playlists:";
 const PLAYLIST_FOLDER_PREFIX = "music-locker-playlist-folders:";
 const SYNC_PREFS_PREFIX = "music-locker-synced-prefs:";
 const SYNC_BUCKET = "music";
+const SYNC_EVENTS_TABLE = "sync_events";
 
 const defaultTheme: AppThemePreferences = {
   themeId: "nocturne",
@@ -413,6 +414,18 @@ export async function saveSyncedUserPreferences(
       upsert: true,
       contentType: "application/json",
     });
+
+  if (!error) {
+    await supabase
+      .from(SYNC_EVENTS_TABLE)
+      .upsert(
+        {
+          user_id: userId,
+          updated_at: preferences.updatedAt,
+        },
+        { onConflict: "user_id" }
+      );
+  }
 
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(USER_PREFERENCES_UPDATED_EVENT));

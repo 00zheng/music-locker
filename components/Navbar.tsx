@@ -209,6 +209,16 @@ export default function Navbar() {
               },
               () => void loadNavbarData()
             )
+            .on(
+              "postgres_changes",
+              {
+                event: "*",
+                schema: "public",
+                table: "sync_events",
+                filter: `user_id=eq.${userId}`,
+              },
+              () => void loadNavbarData()
+            )
             .subscribe();
         }
       } finally {
