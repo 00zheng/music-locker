@@ -56,6 +56,8 @@ const OFFLINE_TRACKS_PREFIX = "music-locker-offline-tracks:";
 const ALL_TRACKS_PLAYLIST_ID = "all-tracks";
 const PREFERENCES_REFRESH_INTERVAL_MS = 8000;
 const TRACKS_REFRESH_INTERVAL_MS = 30000;
+const PLAYLIST_COVER_SIZE = 800;
+const PLAYLIST_COVER_QUALITY = 0.82;
 
 type LoadDataOptions = {
   showLoading?: boolean;
@@ -129,13 +131,55 @@ async function getCachedAudioUrl(trackId: string) {
   return URL.createObjectURL(await response.blob());
 }
 
-async function fileToDataUrl(file: File) {
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("Could not read file."));
-    reader.readAsDataURL(file);
-  });
+async function imageFileToPlaylistCoverDataUrl(file: File) {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Cover art must be an image.");
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => reject(new Error("Could not read image file."));
+      nextImage.src = objectUrl;
+    });
+    const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+
+    if (!sourceSize) {
+      throw new Error("Could not read image dimensions.");
+    }
+
+    const sourceX = Math.max(0, (image.naturalWidth - sourceSize) / 2);
+    const sourceY = Math.max(0, (image.naturalHeight - sourceSize) / 2);
+    const canvas = document.createElement("canvas");
+    canvas.width = PLAYLIST_COVER_SIZE;
+    canvas.height = PLAYLIST_COVER_SIZE;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Could not prepare cover art.");
+    }
+
+    context.fillStyle = "#0b0b0b";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(
+      image,
+      sourceX,
+      sourceY,
+      sourceSize,
+      sourceSize,
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    );
+
+    return canvas.toDataURL("image/jpeg", PLAYLIST_COVER_QUALITY);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function formatCount(count: number) {
@@ -1020,16 +1064,23 @@ export default function LibraryScreen({ playlistId }: Props) {
       return;
     }
 
-    const dataUrl = await fileToDataUrl(selected);
-    const nextPlaylists = playlists.map((playlist) =>
-      playlist.id === activePlaylist.id
-        ? { ...playlist, coverDataUrl: dataUrl }
-        : playlist
-    );
+    setStatus("Updating cover art...");
 
-    persistPlaylists(nextPlaylists, "Cover updated and synced.");
-    setPlaylistCoverUrl(dataUrl);
-    if (coverInputRef.current) coverInputRef.current.value = "";
+    try {
+      const dataUrl = await imageFileToPlaylistCoverDataUrl(selected);
+      const nextPlaylists = playlists.map((playlist) =>
+        playlist.id === activePlaylist.id
+          ? { ...playlist, coverDataUrl: dataUrl }
+          : playlist
+      );
+
+      setPlaylistCoverUrl(dataUrl);
+      await persistPlaylists(nextPlaylists, "Cover updated and synced.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not update cover art.");
+    } finally {
+      if (coverInputRef.current) coverInputRef.current.value = "";
+    }
   }
 
   function playerTrackFromTrack(track: Track, playlist?: Playlist | null) {
