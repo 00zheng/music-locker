@@ -230,6 +230,8 @@ export default function LibraryScreen({ playlistId }: Props) {
   const [isUploading, setIsUploading] = useState(false);
   const [openTrackMenuId, setOpenTrackMenuId] = useState<string | null>(null);
   const [openPlaylistMenuId, setOpenPlaylistMenuId] = useState<string | null>(null);
+  const [renamingPlaylistId, setRenamingPlaylistId] = useState<string | null>(null);
+  const [playlistRenameValue, setPlaylistRenameValue] = useState("");
   const [renamingTrackId, setRenamingTrackId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [playlistCoverUrl, setPlaylistCoverUrl] = useState<string | null>(null);
@@ -848,6 +850,37 @@ export default function LibraryScreen({ playlistId }: Props) {
     setOpenPlaylistMenuId(null);
   }
 
+  function startRenamingPlaylist(playlist: Playlist) {
+    setRenamingPlaylistId(playlist.id);
+    setPlaylistRenameValue(playlist.name);
+  }
+
+  function cancelRenamingPlaylist() {
+    setRenamingPlaylistId(null);
+    setPlaylistRenameValue("");
+  }
+
+  function savePlaylistName(playlistId: string) {
+    if (!user) {
+      return;
+    }
+
+    const nextName = playlistRenameValue.trim();
+
+    if (!nextName) {
+      return;
+    }
+
+    const nextPlaylists = playlists.map((playlist) =>
+      playlist.id === playlistId ? { ...playlist, name: nextName } : playlist
+    );
+
+    persistPlaylists(nextPlaylists, "Playlist renamed and synced.");
+    setRenamingPlaylistId(null);
+    setPlaylistRenameValue("");
+    setOpenPlaylistMenuId(null);
+  }
+
   function deleteFolder(folderId: string) {
     if (!user) {
       return;
@@ -1003,7 +1036,7 @@ export default function LibraryScreen({ playlistId }: Props) {
     return {
       id: track.id,
       title: trackMetadataById[track.id]?.title || track.title,
-      artist: trackMetadataById[track.id]?.artist || track.artist || "Unknown artist",
+      artist: trackMetadataById[track.id]?.artist || track.artist || playlist?.name || activePlaylist?.name || "Unknown artist",
       coverDataUrl: trackMetadataById[track.id]?.coverDataUrl || playlist?.coverDataUrl || activePlaylist?.coverDataUrl || null,
       audioUrl: track.offlineUrl || track.signedUrl || "",
     };
@@ -1175,28 +1208,6 @@ export default function LibraryScreen({ playlistId }: Props) {
     persistTrackMetadata(nextMetadata, "Track renamed and synced.");
     setRenamingTrackId(null);
     setRenameValue("");
-  }
-
-  async function shareTrack(track: Track) {
-    const trackTitle = trackMetadataById[track.id]?.title || track.title;
-    const trackArtist = trackMetadataById[track.id]?.artist || track.artist || "Unknown artist";
-    const shareText = `${trackTitle} by ${trackArtist}`;
-
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: trackTitle, text: shareText });
-        setStatus("Track shared.");
-      } else if (navigator.clipboard) {
-        await navigator.clipboard.writeText(shareText);
-        setStatus("Track info copied.");
-      } else {
-        setStatus(shareText);
-      }
-    } catch {
-      setStatus("Share canceled.");
-    } finally {
-      setOpenTrackMenuId(null);
-    }
   }
 
   async function downloadTrackOffline(track: Track) {
@@ -1492,7 +1503,11 @@ export default function LibraryScreen({ playlistId }: Props) {
                         {!isBuiltInPlaylist ? (
                           <button
                             type="button"
-                            onClick={() => setOpenPlaylistMenuId((current) => (current === playlist.id ? null : playlist.id))}
+                            onClick={() => {
+                              setOpenPlaylistMenuId((current) => (current === playlist.id ? null : playlist.id));
+                              setRenamingPlaylistId(null);
+                              setPlaylistRenameValue("");
+                            }}
                             className="rounded-full px-2 text-lg leading-none text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
                             aria-label={`Open menu for ${playlist.name}`}
                           >
@@ -1511,6 +1526,51 @@ export default function LibraryScreen({ playlistId }: Props) {
                             <span aria-hidden="true">+</span>
                             Add to queue
                           </button>
+                          {renamingPlaylistId === playlist.id ? (
+                            <div className="px-3 py-2">
+                              <input
+                                type="text"
+                                value={playlistRenameValue}
+                                onChange={(event) => setPlaylistRenameValue(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    savePlaylistName(playlist.id);
+                                  }
+
+                                  if (event.key === "Escape") {
+                                    cancelRenamingPlaylist();
+                                  }
+                                }}
+                                className="app-input w-full px-2 py-1.5 text-xs"
+                                autoFocus
+                              />
+                              <div className="mt-2 flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => savePlaylistName(playlist.id)}
+                                  className="flex-1 rounded-lg bg-white px-2 py-1.5 text-xs font-semibold text-black"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelRenamingPlaylist}
+                                  className="flex-1 rounded-lg border border-[var(--app-border)] px-2 py-1.5 text-xs text-[var(--app-muted)] hover:text-white"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startRenamingPlaylist(playlist)}
+                              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
+                            >
+                              Rename
+                            </button>
+                          )}
                           <label className="block px-3 py-2">
                             <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">
                               Move
@@ -1692,7 +1752,6 @@ export default function LibraryScreen({ playlistId }: Props) {
                 <div className="divide-y divide-white/[0.06]">
                   {visibleTracks.map((track, index) => {
                   const displayTitle = trackMetadataById[track.id]?.title || track.title;
-                  const displayArtist = trackMetadataById[track.id]?.artist || track.artist || "Unknown artist";
                   const trackDate = formatTrackDate(track.created_at);
                   const isCurrentTrack = currentTrackId === track.id;
                   const isSelected = selectedTrackIdSet.has(track.id);
@@ -1780,8 +1839,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                           <div className="absolute right-0 top-10 z-20 w-56 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.86)] py-1 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur">
                             <div className="border-b border-white/[0.08] px-3 py-2">
                               <p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Properties</p>
-                              <p className="mt-1 truncate text-xs text-[var(--app-muted)]">Artist: {displayArtist}</p>
-                              <p className="truncate text-xs text-[var(--app-muted)]">Date: {trackDate || "Unknown"}</p>
+                              <p className="mt-1 truncate text-xs text-[var(--app-muted)]">Date: {trackDate || "Unknown"}</p>
                               <p className="truncate text-xs text-[var(--app-muted)]">Size: {formatFileSize(track.file_size)}</p>
                               <p className="truncate text-xs text-[var(--app-muted)]">Type: {track.mime_type || "Unknown"}</p>
                             </div>
@@ -1791,13 +1849,6 @@ export default function LibraryScreen({ playlistId }: Props) {
                               className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
                             >
                               Rename
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void shareTrack(track)}
-                              className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
-                            >
-                              Share
                             </button>
                             {track.isOfflineAvailable ? (
                               <button

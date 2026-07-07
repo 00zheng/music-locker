@@ -127,6 +127,32 @@ function dispatchCurrentTrack(trackId: string | null) {
   );
 }
 
+function isTextEntryTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+    return true;
+  }
+
+  return target instanceof HTMLInputElement && ![
+    "button",
+    "checkbox",
+    "color",
+    "file",
+    "image",
+    "radio",
+    "range",
+    "reset",
+    "submit",
+  ].includes(target.type);
+}
+
 export default function PlayerBridge() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastProgressRenderAtRef = useRef(0);
@@ -217,6 +243,63 @@ export default function PlayerBridge() {
       audio.pause();
     }
   }, [isPlaying]);
+
+  useEffect(() => {
+    function seekBy(seconds: number) {
+      const audio = audioRef.current;
+
+      if (!audio) {
+        return;
+      }
+
+      const audioDuration = Number.isFinite(audio.duration) ? audio.duration : duration;
+      const nextTime = Math.max(0, audio.currentTime + seconds);
+      const clampedTime = audioDuration > 0 ? Math.min(nextTime, audioDuration) : nextTime;
+
+      audio.currentTime = clampedTime;
+      setCurrentTime(clampedTime);
+    }
+
+    function handlePlayerKeyDown(event: KeyboardEvent) {
+      if (!track || isTextEntryTarget(event.target)) {
+        return;
+      }
+
+      if (event.code === "Space" && !event.repeat) {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsPlaying((current) => !current);
+        return;
+      }
+
+      if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
+        event.preventDefault();
+        event.stopPropagation();
+        seekBy(event.code === "ArrowLeft" ? -10 : 10);
+      }
+    }
+
+    function handlePlayerKeyUp(event: KeyboardEvent) {
+      if (
+        !track ||
+        isTextEntryTarget(event.target) ||
+        !["ArrowLeft", "ArrowRight", "Space"].includes(event.code)
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    window.addEventListener("keydown", handlePlayerKeyDown, true);
+    window.addEventListener("keyup", handlePlayerKeyUp, true);
+
+    return () => {
+      window.removeEventListener("keydown", handlePlayerKeyDown, true);
+      window.removeEventListener("keyup", handlePlayerKeyUp, true);
+    };
+  }, [duration, track]);
 
   function playPrevious() {
     const audio = audioRef.current;

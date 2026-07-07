@@ -298,7 +298,7 @@ export default function Navbar() {
       const parentPlaylist = playlists.find((playlist) => playlist.trackIds.includes(track.id));
       const metadata = trackMetadataById[track.id];
       const title = metadata?.title || track.title;
-      const artist = metadata?.artist || track.artist || "Unknown artist";
+      const artist = metadata?.artist || track.artist || parentPlaylist?.name || "Unknown artist";
       const resultKey = `${normalizeSearchValue(title)}:${normalizeSearchValue(artist)}`;
 
       if (seenTrackResults.has(resultKey)) {

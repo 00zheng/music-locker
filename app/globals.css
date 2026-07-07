@@ -106,8 +106,17 @@ body {
   font-family: var(--font-sora), "Segoe UI", sans-serif;
 }
 
+html {
+  background: var(--app-bg);
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
 .app-shell {
-  background: transparent;
+  background: var(--app-gradient), var(--app-bg);
   color: var(--app-text);
 }
 
