@@ -6,8 +6,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type MouseEvent,
-  type PointerEvent,
 } from "react";
 import { useRouter } from "next/navigation";
 
@@ -34,11 +32,6 @@ type QueueDisplayItem = {
   source: QueueSource;
   index: number;
   track: PlayerTrack;
-};
-
-type QueueDragTarget = {
-  source: "manual" | "context";
-  index: number;
 };
 
 const PLAY_EVENT = "music-locker:play-track";
@@ -167,6 +160,7 @@ function PlayerIcon({
     | "repeat"
     | "repeatOne"
     | "volume"
+    | "chevronUp"
     | "chevronDown";
   className?: string;
 }) {
@@ -240,6 +234,7 @@ function PlayerIcon({
         <path d="M19.5 7a8 8 0 0 1 0 10" />
       </>
     ),
+    chevronUp: <path d="m6 15 6-6 6 6" />,
     chevronDown: <path d="m6 9 6 6 6-6" />,
   };
 
@@ -327,12 +322,6 @@ export default function PlayerBridge() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastProgressRenderAtRef = useRef(0);
   const queueScrollRef = useRef<HTMLDivElement | null>(null);
-  const queueDragTimerRef = useRef<number | null>(null);
-  const queueDragStartRef = useRef<{ x: number; y: number } | null>(null);
-  const queuedPointerTargetRef = useRef<HTMLElement | null>(null);
-  const draggedQueueItemRef = useRef<QueueDragTarget | null>(null);
-  const dragOverQueueItemRef = useRef<QueueDragTarget | null>(null);
-  const suppressQueueClickRef = useRef(false);
   const [currentTrack, setCurrentTrack] = useState<PlayerTrack | null>(null);
   const [manualQueue, setManualQueue] = useState<PlayerTrack[]>([]);
   const [contextQueue, setContextQueue] = useState<PlayerTrack[]>([]);
@@ -344,9 +333,6 @@ export default function PlayerBridge() {
   const [isShuffleOn, setIsShuffleOn] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("none");
   const [openQueueMenuKey, setOpenQueueMenuKey] = useState<string | null>(null);
-  const [queueMenuPosition, setQueueMenuPosition] = useState<{ top: number; left: number } | null>(null);
-  const [draggedQueueKey, setDraggedQueueKey] = useState<string | null>(null);
-  const [dragOverQueueKey, setDragOverQueueKey] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.9);
@@ -417,7 +403,6 @@ export default function PlayerBridge() {
 
   const closeQueueMenu = useCallback(() => {
     setOpenQueueMenuKey(null);
-    setQueueMenuPosition(null);
   }, []);
 
   const startTrack = useCallback((nextTrack: PlayerTrack, skippedTracks: PlayerTrack[] = []) => {
@@ -813,51 +798,29 @@ export default function PlayerBridge() {
     closeQueueMenu();
   }
 
-  const clearQueueDragTimer = useCallback(() => {
-    if (queueDragTimerRef.current !== null) {
-      window.clearTimeout(queueDragTimerRef.current);
-      queueDragTimerRef.current = null;
-    }
-  }, []);
-
-  const resetQueueDrag = useCallback(() => {
-    clearQueueDragTimer();
-    queueDragStartRef.current = null;
-    queuedPointerTargetRef.current = null;
-    draggedQueueItemRef.current = null;
-    dragOverQueueItemRef.current = null;
-    setDraggedQueueKey(null);
-    setDragOverQueueKey(null);
-  }, [clearQueueDragTimer]);
-
-  const reorderQueue = useCallback((fromItem: QueueDragTarget, toItem: QueueDragTarget) => {
-    if (
-      isRepeatOneOn ||
-      fromItem.source !== toItem.source ||
-      fromItem.index === toItem.index
-    ) {
+  const moveQueuedItem = useCallback((item: QueueDisplayItem, direction: -1 | 1) => {
+    if (isRepeatOneOn || item.source === "current") {
       return;
     }
 
-    const reorderItems = (items: PlayerTrack[]) => {
-      if (
-        fromItem.index < 0 ||
-        toItem.index < 0 ||
-        fromItem.index >= items.length ||
-        toItem.index >= items.length
-      ) {
+    closeQueueMenu();
+
+    const moveItems = (items: PlayerTrack[]) => {
+      const targetIndex = item.index + direction;
+
+      if (item.index < 0 || targetIndex < 0 || item.index >= items.length || targetIndex >= items.length) {
         return items;
       }
 
-      return moveQueueItem(items, fromItem.index, toItem.index);
+      return moveQueueItem(items, item.index, targetIndex);
     };
 
-    if (fromItem.source === "manual") {
-      setManualQueue(reorderItems);
+    if (item.source === "manual") {
+      setManualQueue(moveItems);
     } else {
-      setContextQueue(reorderItems);
+      setContextQueue(moveItems);
     }
-  }, [isRepeatOneOn]);
+  }, [closeQueueMenu, isRepeatOneOn]);
 
   const removeQueuedItem = useCallback((item: QueueDisplayItem) => {
     closeQueueMenu();
@@ -880,139 +843,14 @@ export default function PlayerBridge() {
     router.push(queuedTrack.sourceHref || "/library");
   }, [closeQueueMenu, router]);
 
-  const toggleQueueMenu = useCallback((key: string, event: MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-
+  const toggleQueueMenu = useCallback((key: string) => {
     if (openQueueMenuKey === key) {
       closeQueueMenu();
       return;
     }
 
-    const triggerBounds = event.currentTarget.getBoundingClientRect();
-    const menuWidth = 192;
-    const menuHeight = 104;
-    const viewportGap = 12;
-    const triggerGap = 8;
-    const opensDown = triggerBounds.bottom + triggerGap + menuHeight <= window.innerHeight - viewportGap;
-    const top = opensDown
-      ? triggerBounds.bottom + triggerGap
-      : Math.max(viewportGap, triggerBounds.top - menuHeight - triggerGap);
-    const left = Math.min(
-      Math.max(viewportGap, triggerBounds.right - menuWidth),
-      window.innerWidth - menuWidth - viewportGap
-    );
-
     setOpenQueueMenuKey(key);
-    setQueueMenuPosition({ top, left });
   }, [closeQueueMenu, openQueueMenuKey]);
-
-  const beginQueueDrag = useCallback((item: QueueDisplayItem, event: PointerEvent<HTMLElement>) => {
-    if (isRepeatOneOn || item.source === "current" || event.button !== 0) {
-      return;
-    }
-
-    const target = event.target;
-
-    if (target instanceof Element && target.closest("[data-queue-action]")) {
-      return;
-    }
-
-    clearQueueDragTimer();
-    closeQueueMenu();
-    queueDragStartRef.current = { x: event.clientX, y: event.clientY };
-    queuedPointerTargetRef.current = event.currentTarget;
-
-    queueDragTimerRef.current = window.setTimeout(() => {
-      const dragItem = { source: item.source, index: item.index } as QueueDragTarget;
-
-      draggedQueueItemRef.current = dragItem;
-      dragOverQueueItemRef.current = dragItem;
-      setDraggedQueueKey(item.key);
-      setDragOverQueueKey(item.key);
-      try {
-        queuedPointerTargetRef.current?.setPointerCapture(event.pointerId);
-      } catch {
-        // The pointer may be gone if the OS cancels a long press.
-      }
-    }, 260);
-  }, [clearQueueDragTimer, closeQueueMenu, isRepeatOneOn]);
-
-  const moveQueueDrag = useCallback((event: PointerEvent<HTMLElement>) => {
-    const dragStart = queueDragStartRef.current;
-
-    if (!dragStart) {
-      return;
-    }
-
-    const deltaX = Math.abs(event.clientX - dragStart.x);
-    const deltaY = Math.abs(event.clientY - dragStart.y);
-
-    if (draggedQueueItemRef.current === null) {
-      if (deltaX > 10 || deltaY > 10) {
-        resetQueueDrag();
-      }
-
-      return;
-    }
-
-    event.preventDefault();
-
-    const elementAtPoint = document.elementFromPoint(event.clientX, event.clientY);
-    const targetRow = elementAtPoint instanceof Element
-      ? elementAtPoint.closest("[data-queue-index]")
-      : null;
-    const nextDragOverIndex = targetRow instanceof HTMLElement ? Number(targetRow.dataset.queueIndex) : Number.NaN;
-    const nextDragOverSource = targetRow instanceof HTMLElement ? targetRow.dataset.queueSource : undefined;
-    const nextDragOverKey = targetRow instanceof HTMLElement ? targetRow.dataset.queueKey : undefined;
-
-    if (
-      Number.isInteger(nextDragOverIndex) &&
-      (nextDragOverSource === "manual" || nextDragOverSource === "context") &&
-      nextDragOverKey
-    ) {
-      const nextItem = {
-        source: nextDragOverSource,
-        index: nextDragOverIndex,
-      } as QueueDragTarget;
-
-      dragOverQueueItemRef.current = nextItem;
-      setDragOverQueueKey(nextDragOverKey);
-    }
-
-    const scrollElement = queueScrollRef.current;
-
-    if (scrollElement) {
-      const bounds = scrollElement.getBoundingClientRect();
-      const edgeSize = 52;
-
-      if (event.clientY < bounds.top + edgeSize) {
-        scrollElement.scrollBy({ top: -12, behavior: "auto" });
-      } else if (event.clientY > bounds.bottom - edgeSize) {
-        scrollElement.scrollBy({ top: 12, behavior: "auto" });
-      }
-    }
-  }, [resetQueueDrag]);
-
-  const endQueueDrag = useCallback((event: PointerEvent<HTMLElement>) => {
-    const fromItem = draggedQueueItemRef.current;
-    const toItem = dragOverQueueItemRef.current;
-
-    if (queuedPointerTargetRef.current?.hasPointerCapture(event.pointerId)) {
-      queuedPointerTargetRef.current.releasePointerCapture(event.pointerId);
-    }
-
-    resetQueueDrag();
-
-    if (fromItem && toItem) {
-      suppressQueueClickRef.current = true;
-      window.setTimeout(() => {
-        suppressQueueClickRef.current = false;
-      }, 350);
-      reorderQueue(fromItem, toItem);
-    }
-  }, [reorderQueue, resetQueueDrag]);
-
-  useEffect(() => resetQueueDrag, [resetQueueDrag]);
 
   const renderExpandedControls = (isCompact = false) => (
     <div className="flex items-center justify-between">
@@ -1122,114 +960,100 @@ export default function PlayerBridge() {
             closeQueueMenu();
           }
         }}
-        className={`${listClassName} queue-drag-surface scrollbar-none touch-pan-y select-none overflow-y-auto overscroll-contain p-2 pb-24`}
+        className={`${listClassName} scrollbar-none touch-pan-y select-none overflow-y-auto overscroll-contain p-2 pb-24`}
       >
         {displayedQueueItems.map((item) => (
-          <div
-            key={item.key}
-            data-queue-key={item.key}
-            data-queue-source={item.source}
-            data-queue-index={item.index}
-            onContextMenu={(event) => event.preventDefault()}
-            onPointerDown={(event) => beginQueueDrag(item, event)}
-            onPointerMove={moveQueueDrag}
-            onPointerUp={endQueueDrag}
-            onPointerCancel={endQueueDrag}
-            className={`relative flex min-h-16 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition duration-200 ease-out ${
-              item.source === "current" ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-[var(--app-muted)] hover:bg-white/[0.08]"
-            } ${
-              draggedQueueKey === item.key ? "scale-[0.985] opacity-60" : ""
-            } ${
-              dragOverQueueKey === item.key && draggedQueueKey !== null && draggedQueueKey !== item.key
-                ? "ring-1 ring-white/40"
-                : ""
-            }`}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                if (suppressQueueClickRef.current) {
-                  suppressQueueClickRef.current = false;
-                  return;
-                }
-
-                selectQueuedItem(item);
-              }}
-              className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+          <div key={item.key} className="relative">
+            <div
+              className={`flex min-h-16 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition duration-200 ease-out ${
+                item.source === "current" ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-[var(--app-muted)] hover:bg-white/[0.08]"
+              }`}
             >
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/[0.06] font-mono text-xs text-white shadow-[0_10px_30px_rgba(0,0,0,0.22)]">
-                {item.track.coverDataUrl ? (
-                  /* eslint-disable-next-line @next/next/no-img-element */
-                  <img src={item.track.coverDataUrl} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  item.index + 1
-                )}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-base font-semibold text-white">{item.track.title}</span>
-                <span className="block truncate text-xs text-[var(--app-muted)]">{item.track.artist}</span>
-              </span>
-            </button>
+              <button
+                type="button"
+                onClick={() => selectQueuedItem(item)}
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+              >
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/[0.06] font-mono text-xs text-white shadow-[0_10px_30px_rgba(0,0,0,0.22)]">
+                  {item.track.coverDataUrl ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={item.track.coverDataUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    item.index + 1
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-base font-semibold text-white">{item.track.title}</span>
+                  <span className="block truncate text-xs text-[var(--app-muted)]">{item.track.artist}</span>
+                </span>
+              </button>
 
-            {item.source === "current" ? (
-              <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-black">
-                Now
-              </span>
-            ) : null}
+              {item.source === "current" ? (
+                <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-black">
+                  Now
+                </span>
+              ) : (
+                <div className="flex h-11 w-20 shrink-0 overflow-hidden rounded-full border border-white/[0.08] bg-white/[0.04]">
+                  <button
+                    type="button"
+                    onClick={() => moveQueuedItem(item, -1)}
+                    disabled={item.index === 0}
+                    aria-label={`Move ${item.track.title} up`}
+                    title="Move up"
+                    className="flex flex-1 items-center justify-center text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:text-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-white/70"
+                  >
+                    <PlayerIcon name="chevronUp" className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveQueuedItem(item, 1)}
+                    disabled={
+                      item.source === "manual"
+                        ? item.index >= manualQueue.length - 1
+                        : item.index >= contextQueue.length - 1
+                    }
+                    aria-label={`Move ${item.track.title} down`}
+                    title="Move down"
+                    className="flex flex-1 items-center justify-center text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:text-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-white/70"
+                  >
+                    <PlayerIcon name="chevronDown" className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
 
-            <button
-              type="button"
-              data-queue-action
-              onPointerDown={(event) => event.stopPropagation()}
-              onPointerUp={(event) => event.stopPropagation()}
-              onClick={(event) => toggleQueueMenu(item.key, event)}
-              className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
-              aria-label={`Open queue menu for ${item.track.title}`}
-              aria-expanded={openQueueMenuKey === item.key}
-              title="Queue menu"
-            >
-              <span className="h-1 w-1 rounded-full bg-current" />
-              <span className="h-1 w-1 rounded-full bg-current" />
-              <span className="h-1 w-1 rounded-full bg-current" />
-            </button>
+              <button
+                type="button"
+                onClick={() => toggleQueueMenu(item.key)}
+                className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+                aria-label={`Open queue menu for ${item.track.title}`}
+                aria-expanded={openQueueMenuKey === item.key}
+                title="Queue menu"
+              >
+                <span className="h-1 w-1 rounded-full bg-current" />
+                <span className="h-1 w-1 rounded-full bg-current" />
+                <span className="h-1 w-1 rounded-full bg-current" />
+              </button>
+            </div>
 
             {openQueueMenuKey === item.key ? (
-              <div
-                data-queue-action
-                style={queueMenuPosition ? { top: queueMenuPosition.top, left: queueMenuPosition.left } : undefined}
-                className="fixed z-[360] w-48 overflow-hidden rounded-2xl border border-white/[0.1] bg-[rgba(20,20,20,0.94)] p-2 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl"
-              >
+              <div className="mx-3 mb-2 mt-1 overflow-hidden rounded-2xl border border-white/[0.1] bg-white/[0.07] p-2 text-sm shadow-[0_14px_36px_rgba(0,0,0,0.34)] backdrop-blur-xl">
                 <button
                   type="button"
-                  onPointerDown={(event) => event.stopPropagation()}
                   onClick={() => goToQueuedTrackProject(item.track)}
-                  className="flex min-h-10 w-full items-center rounded-xl px-3 py-2 text-left text-white transition hover:bg-white/[0.08]"
+                  className="flex min-h-11 w-full items-center rounded-xl px-3 py-2 text-left text-white transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
                 >
                   Go to project
                 </button>
                 {item.source !== "current" ? (
                   <button
                     type="button"
-                    onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => removeQueuedItem(item)}
-                    className="flex min-h-10 w-full items-center rounded-xl px-3 py-2 text-left text-red-300 transition hover:bg-red-500/[0.12]"
+                    className="flex min-h-11 w-full items-center rounded-xl px-3 py-2 text-left text-red-300 transition hover:bg-red-500/[0.12] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200"
                   >
                     Remove from queue
                   </button>
                 ) : null}
               </div>
-            ) : null}
-
-            {draggedQueueKey === item.key ? (
-              <span className="pointer-events-none absolute inset-0 rounded-2xl border border-white/30" aria-hidden="true" />
-            ) : null}
-
-            {draggedQueueKey !== null && !isRepeatOneOn ? (
-              <span className="pointer-events-none absolute left-1 top-1/2 flex -translate-y-1/2 flex-col gap-0.5 text-white/30" aria-hidden="true">
-                <span className="h-1 w-1 rounded-full bg-current" />
-                <span className="h-1 w-1 rounded-full bg-current" />
-                <span className="h-1 w-1 rounded-full bg-current" />
-              </span>
             ) : null}
           </div>
         ))}
