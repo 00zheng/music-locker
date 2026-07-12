@@ -84,7 +84,6 @@ function NavIcon({
 }: {
   name:
     | "bell"
-    | "back"
     | "close"
     | "library"
     | "music"
@@ -95,12 +94,6 @@ function NavIcon({
   className?: string;
 }) {
   const paths = {
-    back: (
-      <>
-        <path d="m15 18-6-6 6-6" />
-        <path d="M9 12h12" />
-      </>
-    ),
     bell: (
       <>
         <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
@@ -415,15 +408,6 @@ export default function Navbar() {
     <nav className="relative z-[100] w-full border-b border-[var(--app-border)] bg-[rgba(12,12,12,0.52)] backdrop-blur-xl">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.08] text-white transition hover:bg-white/[0.12] sm:hidden"
-            aria-label="Back"
-            title="Back"
-          >
-            <NavIcon name="back" />
-          </button>
           <Link href="/library" className="truncate text-lg font-semibold tracking-tight text-[var(--app-text)]">
             music-locker
           </Link>

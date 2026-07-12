@@ -149,6 +149,102 @@ body {
   box-shadow: 0 0 0 1px var(--app-accent);
 }
 
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+input[type="range"] {
+  touch-action: manipulation;
+}
+
+.player-range {
+  --player-range-progress: 0%;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  display: block;
+}
+
+.player-range:focus {
+  outline: none;
+}
+
+.player-range:focus-visible {
+  border-radius: 999px;
+  outline: 2px solid rgba(255, 255, 255, 0.72);
+  outline-offset: 4px;
+}
+
+.player-range::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--app-text) 0%,
+    var(--app-text) var(--player-range-progress),
+    rgba(255, 255, 255, 0.16) var(--player-range-progress),
+    rgba(255, 255, 255, 0.16) 100%
+  );
+}
+
+.player-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -6.5px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--app-text);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32);
+}
+
+.player-range::-moz-range-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.player-range::-moz-range-progress {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--app-text);
+}
+
+.player-range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--app-text);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32);
+}
+
+@media (pointer: coarse) {
+  .player-range::-webkit-slider-runnable-track {
+    height: 7px;
+  }
+
+  .player-range::-webkit-slider-thumb {
+    width: 24px;
+    height: 24px;
+    margin-top: -8.5px;
+  }
+
+  .player-range::-moz-range-track,
+  .player-range::-moz-range-progress {
+    height: 7px;
+  }
+
+  .player-range::-moz-range-thumb {
+    width: 24px;
+    height: 24px;
+  }
+}
+
 .app-button {
   border-radius: 10px;
   border: 1px solid var(--app-border);

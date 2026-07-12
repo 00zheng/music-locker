@@ -1802,15 +1802,7 @@ export default function LibraryScreen({ playlistId }: Props) {
       <Navbar />
       <main className="app-shell min-h-screen px-5 py-6 pb-32 text-[var(--app-text)] sm:px-8">
         <div className="app-content">
-          <div className="mb-8 flex items-center justify-between gap-4">
-            <Link
-              href="/library"
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--app-border)] text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
-              aria-label="Back to library"
-              title="Back to library"
-            >
-              <InlineIcon name="back" />
-            </Link>
+          <div className="mb-8 flex items-center justify-end gap-4">
             <p className="text-sm text-[var(--app-muted)]">{displayName}</p>
           </div>
 

@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 
 type PlayerTrack = {
   id: string;
@@ -80,11 +88,43 @@ function setMediaSessionAction(
   }
 }
 
+function shuffleIndexes(indexes: number[]) {
+  const shuffled = [...indexes];
+
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+
+  return shuffled;
+}
+
+function buildShuffleOrder(length: number, startIndex: number) {
+  if (length <= 0) {
+    return [];
+  }
+
+  const safeStartIndex = Math.min(Math.max(startIndex, 0), length - 1);
+  const rest = Array.from({ length }, (_, index) => index).filter(
+    (index) => index !== safeStartIndex
+  );
+
+  return [safeStartIndex, ...shuffleIndexes(rest)];
+}
+
 function PlayerIcon({
   name,
   className = "h-4 w-4",
 }: {
-  name: "previous" | "play" | "pause" | "next" | "queue" | "shuffle" | "volume";
+  name:
+    | "previous"
+    | "play"
+    | "pause"
+    | "next"
+    | "queue"
+    | "shuffle"
+    | "volume"
+    | "chevronDown";
   className?: string;
 }) {
   const paths = {
@@ -130,6 +170,7 @@ function PlayerIcon({
         <path d="M19.5 7a8 8 0 0 1 0 10" />
       </>
     ),
+    chevronDown: <path d="m6 9 6 6 6-6" />,
   };
 
   return (
@@ -153,12 +194,14 @@ export function dispatchPlayQueue(tracks: PlayerTrack[], startIndex: number) {
     return;
   }
 
-  window.dispatchEvent(new CustomEvent<PlayerRequest>(PLAY_EVENT, {
-    detail: {
-      tracks,
-      startIndex: Math.min(Math.max(startIndex, 0), tracks.length - 1),
-    },
-  }));
+  window.dispatchEvent(
+    new CustomEvent<PlayerRequest>(PLAY_EVENT, {
+      detail: {
+        tracks,
+        startIndex: Math.min(Math.max(startIndex, 0), tracks.length - 1),
+      },
+    })
+  );
 }
 
 export function dispatchAppendQueue(tracks: PlayerTrack[]) {
@@ -166,11 +209,13 @@ export function dispatchAppendQueue(tracks: PlayerTrack[]) {
     return;
   }
 
-  window.dispatchEvent(new CustomEvent<Pick<PlayerRequest, "tracks">>(APPEND_EVENT, {
-    detail: {
-      tracks,
-    },
-  }));
+  window.dispatchEvent(
+    new CustomEvent<Pick<PlayerRequest, "tracks">>(APPEND_EVENT, {
+      detail: {
+        tracks,
+      },
+    })
+  );
 }
 
 function dispatchCurrentTrack(trackId: string | null) {
@@ -214,47 +259,151 @@ export default function PlayerBridge() {
   const [queueIndex, setQueueIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
-  const [isControlsOpen, setIsControlsOpen] = useState(false);
+  const [isExpandedPlayerOpen, setIsExpandedPlayerOpen] = useState(false);
   const [isShuffleOn, setIsShuffleOn] = useState(false);
+  const [shuffleOrder, setShuffleOrder] = useState<number[]>([]);
+  const [shuffleCursor, setShuffleCursor] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.9);
   const track = queue[queueIndex] || null;
+  const shufflePosition = isShuffleOn
+    ? shuffleOrder[shuffleCursor] === queueIndex
+      ? shuffleCursor
+      : shuffleOrder.indexOf(queueIndex)
+    : queueIndex;
+  const hasPreviousTrack = isShuffleOn ? shufflePosition > 0 : queueIndex > 0;
+  const hasNextTrack = isShuffleOn
+    ? shufflePosition >= 0 && shufflePosition < shuffleOrder.length - 1
+    : queueIndex < queue.length - 1;
+  const canPlayPrevious = currentTime > 3 || hasPreviousTrack;
+  const canPlayNext = hasNextTrack;
+  const scrubMax = duration > 0 ? duration : Math.max(currentTime, 0);
+  const scrubValue = Math.min(currentTime, scrubMax);
+  const progressPercent =
+    duration > 0 ? `${Math.min(100, Math.max(0, (currentTime / duration) * 100))}%` : "0%";
+  const progressRangeStyle = {
+    "--player-range-progress": progressPercent,
+  } as CSSProperties;
+
+  const resetPlaybackProgress = useCallback(() => {
+    setCurrentTime(0);
+    setDuration(0);
+    lastProgressRenderAtRef.current = 0;
+  }, []);
+
+  const seekTo = useCallback((value: number) => {
+    const audio = audioRef.current;
+    const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
+    const audioDuration =
+      audio && Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : duration;
+    const nextTime = audioDuration > 0 ? Math.min(safeValue, audioDuration) : safeValue;
+
+    if (audio) {
+      audio.currentTime = nextTime;
+    }
+
+    lastProgressRenderAtRef.current = performance.now();
+    setCurrentTime(nextTime);
+  }, [duration]);
+
+  const startTrackAt = useCallback((index: number, nextShuffleCursor?: number) => {
+    const safeIndex = Math.min(Math.max(index, 0), Math.max(queue.length - 1, 0));
+
+    setQueueIndex(safeIndex);
+    resetPlaybackProgress();
+
+    if (typeof nextShuffleCursor === "number") {
+      setShuffleCursor(nextShuffleCursor);
+    }
+
+    setIsPlaying(true);
+  }, [queue.length, resetPlaybackProgress]);
+
+  const toggleShuffle = useCallback(() => {
+    if (isShuffleOn) {
+      setIsShuffleOn(false);
+      setShuffleOrder([]);
+      setShuffleCursor(0);
+      return;
+    }
+
+    setIsShuffleOn(true);
+
+    if (queue.length > 0) {
+      setShuffleOrder(buildShuffleOrder(queue.length, queueIndex));
+      setShuffleCursor(0);
+    }
+  }, [isShuffleOn, queue.length, queueIndex]);
+
+  const selectQueuedTrack = useCallback((index: number) => {
+    const safeIndex = Math.min(Math.max(index, 0), Math.max(queue.length - 1, 0));
+
+    setQueueIndex(safeIndex);
+    resetPlaybackProgress();
+
+    if (isShuffleOn) {
+      setShuffleOrder(buildShuffleOrder(queue.length, safeIndex));
+      setShuffleCursor(0);
+    }
+
+    setIsPlaying(true);
+  }, [isShuffleOn, queue.length, resetPlaybackProgress]);
 
   useEffect(() => {
     function handlePlay(event: Event) {
       const customEvent = event as CustomEvent<PlayerRequest>;
-      setQueue(customEvent.detail.tracks);
-      setQueueIndex(customEvent.detail.startIndex);
-      setCurrentTime(0);
-      setDuration(0);
-      lastProgressRenderAtRef.current = 0;
+      const nextQueue = customEvent.detail.tracks;
+      const startIndex = Math.min(Math.max(customEvent.detail.startIndex, 0), nextQueue.length - 1);
+
+      setQueue(nextQueue);
+      setQueueIndex(startIndex);
+      resetPlaybackProgress();
+
+      if (isShuffleOn) {
+        setShuffleOrder(buildShuffleOrder(nextQueue.length, startIndex));
+        setShuffleCursor(0);
+      } else {
+        setShuffleOrder([]);
+        setShuffleCursor(0);
+      }
+
       setIsPlaying(true);
     }
 
     window.addEventListener(PLAY_EVENT, handlePlay as EventListener);
     return () => window.removeEventListener(PLAY_EVENT, handlePlay as EventListener);
-  }, []);
+  }, [isShuffleOn, resetPlaybackProgress]);
 
   useEffect(() => {
     function handleAppend(event: Event) {
       const customEvent = event as CustomEvent<Pick<PlayerRequest, "tracks">>;
+      const incomingTracks = customEvent.detail.tracks;
+
       setQueue((currentQueue) => {
+        const nextQueue = [...currentQueue, ...incomingTracks];
+
         if (currentQueue.length === 0) {
           setQueueIndex(0);
-          setCurrentTime(0);
-          setDuration(0);
-          lastProgressRenderAtRef.current = 0;
+          resetPlaybackProgress();
           setIsPlaying(true);
+
+          if (isShuffleOn) {
+            setShuffleOrder(buildShuffleOrder(nextQueue.length, 0));
+            setShuffleCursor(0);
+          }
+        } else if (isShuffleOn) {
+          const appendedIndexes = incomingTracks.map((_, index) => currentQueue.length + index);
+          setShuffleOrder((currentOrder) => [...currentOrder, ...shuffleIndexes(appendedIndexes)]);
         }
 
-        return [...currentQueue, ...customEvent.detail.tracks];
+        return nextQueue;
       });
     }
 
     window.addEventListener(APPEND_EVENT, handleAppend as EventListener);
     return () => window.removeEventListener(APPEND_EVENT, handleAppend as EventListener);
-  }, []);
+  }, [isShuffleOn, resetPlaybackProgress]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -292,29 +441,23 @@ export default function PlayerBridge() {
     }
 
     if (isPlaying) {
+      if (track) {
+        dispatchCurrentTrack(track.id);
+      }
+
       void audio.play().catch(() => setIsPlaying(false));
     } else {
       audio.pause();
     }
-  }, [isPlaying]);
+  }, [isPlaying, track]);
 
   useEffect(() => {
     function seekBy(seconds: number) {
-      const audio = audioRef.current;
-
-      if (!audio) {
-        return;
-      }
-
-      const audioDuration = Number.isFinite(audio.duration) ? audio.duration : duration;
-      const nextTime = Math.max(0, audio.currentTime + seconds);
-      const clampedTime = audioDuration > 0 ? Math.min(nextTime, audioDuration) : nextTime;
-
-      audio.currentTime = clampedTime;
-      setCurrentTime(clampedTime);
+      const currentAudioTime = audioRef.current?.currentTime ?? currentTime;
+      seekTo(currentAudioTime + seconds);
     }
 
-    function handlePlayerKeyDown(event: KeyboardEvent) {
+    function handlePlayerKeyDown(event: globalThis.KeyboardEvent) {
       if (!track || isTextEntryTarget(event.target)) {
         return;
       }
@@ -333,7 +476,7 @@ export default function PlayerBridge() {
       }
     }
 
-    function handlePlayerKeyUp(event: KeyboardEvent) {
+    function handlePlayerKeyUp(event: globalThis.KeyboardEvent) {
       if (
         !track ||
         isTextEntryTarget(event.target) ||
@@ -353,7 +496,7 @@ export default function PlayerBridge() {
       window.removeEventListener("keydown", handlePlayerKeyDown, true);
       window.removeEventListener("keyup", handlePlayerKeyUp, true);
     };
-  }, [duration, track]);
+  }, [currentTime, seekTo, track]);
 
   const playPrevious = useCallback(() => {
     const audio = audioRef.current;
@@ -364,53 +507,68 @@ export default function PlayerBridge() {
       return;
     }
 
-    setQueueIndex((current) => Math.max(0, current - 1));
-    setCurrentTime(0);
-    setDuration(0);
-    setIsPlaying(true);
-  }, []);
+    if (isShuffleOn) {
+      const currentShuffleCursor =
+        shuffleOrder[shuffleCursor] === queueIndex ? shuffleCursor : shuffleOrder.indexOf(queueIndex);
 
-  const nextIndex = useCallback(() => {
-    if (!isShuffleOn || queue.length <= 1) {
-      return Math.min(queue.length - 1, queueIndex + 1);
+      if (currentShuffleCursor <= 0) {
+        return;
+      }
+
+      const targetCursor = currentShuffleCursor - 1;
+      const targetIndex = shuffleOrder[targetCursor];
+
+      startTrackAt(targetIndex, targetCursor);
+      return;
     }
 
-    const possibleIndexes = queue
-      .map((_, index) => index)
-      .filter((index) => index !== queueIndex);
+    if (queueIndex <= 0) {
+      return;
+    }
 
-    return possibleIndexes[Math.floor(Math.random() * possibleIndexes.length)] ?? queueIndex;
-  }, [isShuffleOn, queue, queueIndex]);
+    startTrackAt(queueIndex - 1);
+  }, [isShuffleOn, queueIndex, shuffleCursor, shuffleOrder, startTrackAt]);
+
+  const moveToNextTrack = useCallback(() => {
+    if (queue.length === 0) {
+      return false;
+    }
+
+    if (isShuffleOn) {
+      const currentShuffleCursor =
+        shuffleOrder[shuffleCursor] === queueIndex ? shuffleCursor : shuffleOrder.indexOf(queueIndex);
+
+      if (currentShuffleCursor < 0 || currentShuffleCursor >= shuffleOrder.length - 1) {
+        return false;
+      }
+
+      const targetCursor = currentShuffleCursor + 1;
+      const targetIndex = shuffleOrder[targetCursor];
+
+      startTrackAt(targetIndex, targetCursor);
+      return true;
+    }
+
+    if (queueIndex >= queue.length - 1) {
+      return false;
+    }
+
+    startTrackAt(queueIndex + 1);
+    return true;
+  }, [isShuffleOn, queue.length, queueIndex, shuffleCursor, shuffleOrder, startTrackAt]);
 
   const playNext = useCallback(() => {
-    if (queue.length === 0) {
-      return;
-    }
-
-    const targetIndex = nextIndex();
-
-    if (targetIndex === queueIndex && !isShuffleOn) {
-      return;
-    }
-
-    setQueueIndex(targetIndex);
-    setCurrentTime(0);
-    setDuration(0);
-    setIsPlaying(true);
-  }, [isShuffleOn, nextIndex, queue.length, queueIndex]);
+    moveToNextTrack();
+  }, [moveToNextTrack]);
 
   const handleEnded = useCallback(() => {
-    if (isShuffleOn || queueIndex < queue.length - 1) {
-      setQueueIndex(nextIndex());
-      setCurrentTime(0);
-      setDuration(0);
-      setIsPlaying(true);
+    if (moveToNextTrack()) {
       return;
     }
 
     setIsPlaying(false);
     dispatchCurrentTrack(null);
-  }, [isShuffleOn, nextIndex, queue.length, queueIndex]);
+  }, [moveToNextTrack]);
 
   useEffect(() => {
     const mediaSession = getMediaSession();
@@ -442,17 +600,21 @@ export default function PlayerBridge() {
     setMediaSessionAction("play", () => setIsPlaying(true));
     setMediaSessionAction("pause", () => setIsPlaying(false));
     setMediaSessionAction("previoustrack", playPrevious);
-    setMediaSessionAction("nexttrack", queue.length > 1 ? playNext : null);
-    setMediaSessionAction("seekbackward", null);
-    setMediaSessionAction("seekforward", null);
-    setMediaSessionAction("seekto", null);
+    setMediaSessionAction("nexttrack", canPlayNext ? playNext : null);
+    setMediaSessionAction("seekbackward", () => seekTo((audioRef.current?.currentTime ?? currentTime) - 10));
+    setMediaSessionAction("seekforward", () => seekTo((audioRef.current?.currentTime ?? currentTime) + 10));
+    setMediaSessionAction("seekto", (details) => {
+      if (typeof details.seekTime === "number") {
+        seekTo(details.seekTime);
+      }
+    });
     setMediaSessionAction("stop", () => setIsPlaying(false));
 
     return () => {
       mediaSession.metadata = null;
       MEDIA_SESSION_ACTIONS.forEach((action) => setMediaSessionAction(action, null));
     };
-  }, [playNext, playPrevious, queue.length, track]);
+  }, [canPlayNext, currentTime, playNext, playPrevious, seekTo, track]);
 
   useEffect(() => {
     const mediaSession = getMediaSession();
@@ -486,6 +648,59 @@ export default function PlayerBridge() {
     }
   }, [currentTime, duration, isPlaying, track]);
 
+  function stopMiniPlayerOpen(event: ReactMouseEvent<HTMLElement>) {
+    event.stopPropagation();
+  }
+
+  function handleMiniPlayerClick(event: ReactMouseEvent<HTMLDivElement>) {
+    const target = event.target;
+
+    if (target instanceof HTMLElement && target.closest("[data-player-action]")) {
+      return;
+    }
+
+    setIsExpandedPlayerOpen(true);
+  }
+
+  function handleMiniPlayerKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const target = event.target;
+
+    if (target instanceof HTMLElement && target.closest("[data-player-action]")) {
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setIsExpandedPlayerOpen(true);
+    }
+  }
+
+  const renderQueuePanel = (className: string, listClassName = "max-h-56") => (
+    <div className={className}>
+      <div className="flex items-center justify-between border-b border-white/[0.08] px-4 py-3">
+        <p className="text-sm font-semibold text-white">Queue</p>
+        <p className="text-xs text-[var(--app-muted)]">
+          {queueIndex + 1} / {queue.length}
+        </p>
+      </div>
+      <div className={`${listClassName} overflow-y-auto py-1`}>
+        {queue.map((queuedTrack, index) => (
+          <button
+            key={`${queuedTrack.id}-${index}`}
+            type="button"
+            onClick={() => selectQueuedTrack(index)}
+            className={`block min-h-11 w-full px-4 py-2 text-left text-sm transition hover:bg-white/[0.08] ${
+              index === queueIndex ? "bg-white/[0.1] text-white" : "text-[var(--app-muted)]"
+            }`}
+          >
+            <span className="mr-3 font-mono text-xs">{index + 1}</span>
+            <span>{queuedTrack.title}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <>
       <audio
@@ -516,102 +731,178 @@ export default function PlayerBridge() {
       />
 
       {track ? (
-      <div className="fixed inset-x-0 bottom-5 z-50 px-4">
-        {track && isQueueOpen ? (
-          <div className="mx-auto mb-3 max-h-72 max-w-4xl overflow-hidden rounded-2xl border border-white/[0.08] bg-[rgba(27,27,27,0.72)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-            <div className="flex items-center justify-between border-b border-white/[0.08] px-4 py-3">
-              <p className="text-sm font-semibold text-white">Queue</p>
-              <p className="text-xs text-[var(--app-muted)]">{queueIndex + 1} / {queue.length}</p>
-            </div>
-            <div className="max-h-56 overflow-y-auto py-1">
-              {queue.map((queuedTrack, index) => (
-                <button
-                  key={`${queuedTrack.id}-${index}`}
-                  type="button"
-                  onClick={() => {
-                    setQueueIndex(index);
-                    setCurrentTime(0);
-                    setDuration(0);
-                    setIsPlaying(true);
-                  }}
-                  className={`block w-full px-4 py-2 text-left text-sm hover:bg-white/[0.08] ${
-                    index === queueIndex ? "bg-green-500/10 text-green-300" : "text-[var(--app-muted)]"
-                  }`}
-                >
-                  <span className="mr-3 font-mono text-xs">{index + 1}</span>
-                  {queuedTrack.title}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
+        <>
+          {isExpandedPlayerOpen ? (
+            <div className="fixed inset-0 z-[60] bg-[rgba(8,8,8,0.94)] px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] text-white backdrop-blur-2xl sm:hidden">
+              <div className="mx-auto flex h-full max-w-md flex-col">
+                <div className="flex h-14 items-center justify-between">
+                  <div className="h-1.5 w-12 rounded-full bg-white/20" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => setIsExpandedPlayerOpen(false)}
+                    className="flex h-12 w-12 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+                    aria-label="Collapse player"
+                    title="Collapse"
+                  >
+                    <PlayerIcon name="chevronDown" className="h-6 w-6" />
+                  </button>
+                </div>
 
-        {isControlsOpen ? (
-          <div className="mx-auto mb-3 flex max-w-sm items-center justify-between gap-2 rounded-2xl border border-white/[0.08] bg-[rgba(27,27,27,0.72)] px-3 py-3 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:hidden">
-            <button
-              type="button"
-              onClick={() => setIsShuffleOn((current) => !current)}
-              aria-label="Shuffle"
-              title="Shuffle"
-              className={`flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/[0.08] ${
-                isShuffleOn ? "text-white" : "text-[var(--app-muted)]"
-              }`}
-            >
-              <PlayerIcon name="shuffle" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsQueueOpen((current) => !current)}
-              aria-label="Queue"
-              title="Queue"
-              className="flex h-10 w-10 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08]"
-            >
-              <PlayerIcon name="queue" />
-            </button>
-            <label className="flex min-w-0 flex-1 items-center gap-2 text-white">
-              <PlayerIcon name="volume" />
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={volume}
-                onChange={(event) => setVolume(Number(event.target.value))}
-                className="min-w-0 flex-1 accent-white"
-                aria-label="Volume"
-              />
-            </label>
-          </div>
-        ) : null}
+                <div className="flex min-h-0 flex-1 flex-col justify-center gap-6">
+                  <div className="mx-auto w-[78vw] max-w-[22rem]">
+                    {track.coverDataUrl ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={track.coverDataUrl}
+                        alt=""
+                        className="aspect-square w-full rounded-[28px] object-cover shadow-[0_28px_90px_rgba(0,0,0,0.5)]"
+                      />
+                    ) : (
+                      <div className="aspect-square w-full rounded-[28px] border border-[var(--app-border)] bg-[var(--app-glass)] shadow-[0_28px_90px_rgba(0,0,0,0.5)]" />
+                    )}
+                  </div>
 
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-2 rounded-2xl border border-white/[0.08] bg-[rgba(36,36,36,0.72)] px-2 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:flex-nowrap sm:gap-3 sm:rounded-full sm:px-3">
-            <>
-              <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+                  <div className="min-w-0 text-center">
+                    <p className="truncate text-2xl font-semibold leading-tight text-white">{track.title}</p>
+                    <p className="mt-2 truncate text-base text-[var(--app-muted)]">{track.artist}</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={scrubMax}
+                      step={0.01}
+                      value={scrubValue}
+                      onInput={(event) => seekTo(Number(event.currentTarget.value))}
+                      onChange={(event) => seekTo(Number(event.currentTarget.value))}
+                      className="player-range h-10 w-full"
+                      style={progressRangeStyle}
+                      aria-label="Song position"
+                    />
+                    <div className="flex justify-between font-mono text-xs text-[var(--app-muted)]">
+                      <span>{formatTime(currentTime)}</span>
+                      <span>{formatTime(duration)}</span>
+                    </div>
+                  </div>
+
+                  {isQueueOpen
+                    ? renderQueuePanel(
+                        "max-h-52 overflow-hidden rounded-2xl border border-white/[0.08] bg-[rgba(27,27,27,0.72)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl",
+                        "max-h-36"
+                      )
+                    : null}
+
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={toggleShuffle}
+                      aria-label="Shuffle"
+                      aria-pressed={isShuffleOn}
+                      title="Shuffle"
+                      className={`flex h-12 w-12 items-center justify-center rounded-full transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+                        isShuffleOn ? "bg-white text-black" : "text-[var(--app-muted)]"
+                      }`}
+                    >
+                      <PlayerIcon name="shuffle" className="h-5 w-5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={playPrevious}
+                      disabled={!canPlayPrevious}
+                      aria-label="Back"
+                      title="Back"
+                      className="flex h-14 w-14 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+                    >
+                      <PlayerIcon name="previous" className="h-7 w-7" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsPlaying((current) => !current)}
+                      aria-label={isPlaying ? "Pause" : "Play"}
+                      title={isPlaying ? "Pause" : "Play"}
+                      className="flex h-20 w-20 items-center justify-center rounded-full bg-white text-black shadow-[0_18px_50px_rgba(0,0,0,0.35)] transition active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+                    >
+                      <PlayerIcon name={isPlaying ? "pause" : "play"} className="h-8 w-8" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={playNext}
+                      disabled={!canPlayNext}
+                      aria-label="Skip"
+                      title="Skip"
+                      className="flex h-14 w-14 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+                    >
+                      <PlayerIcon name="next" className="h-7 w-7" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsQueueOpen((current) => !current)}
+                      aria-label="Queue"
+                      aria-pressed={isQueueOpen}
+                      title="Queue"
+                      className={`flex h-12 w-12 items-center justify-center rounded-full transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+                        isQueueOpen ? "bg-white text-black" : "text-[var(--app-muted)]"
+                      }`}
+                    >
+                      <PlayerIcon name="queue" className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="fixed inset-x-0 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-50 px-3 sm:bottom-5 sm:px-4">
+            {isQueueOpen && !isExpandedPlayerOpen
+              ? renderQueuePanel(
+                  "mx-auto mb-3 max-h-72 max-w-4xl overflow-hidden rounded-2xl border border-white/[0.08] bg-[rgba(27,27,27,0.72)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+                )
+              : null}
+
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={handleMiniPlayerClick}
+              onKeyDown={handleMiniPlayerKeyDown}
+              aria-label={`Open player for ${track.title}`}
+              className="mx-auto flex max-w-5xl cursor-pointer flex-wrap items-center gap-2 rounded-2xl border border-white/[0.08] bg-[rgba(36,36,36,0.78)] px-2 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl transition active:scale-[0.995] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 sm:cursor-default sm:flex-nowrap sm:gap-3 sm:rounded-full sm:px-3"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-2 pr-1 sm:gap-3">
                 {track.coverDataUrl ? (
                   /* eslint-disable-next-line @next/next/no-img-element */
-                  <img src={track.coverDataUrl} alt="cover" className="h-10 w-10 rounded-full object-cover sm:h-11 sm:w-11" />
+                  <img
+                    src={track.coverDataUrl}
+                    alt=""
+                    className="h-11 w-11 rounded-xl object-cover sm:h-11 sm:w-11 sm:rounded-full"
+                  />
                 ) : (
-                  <div className="h-10 w-10 rounded-full border border-[var(--app-border)] bg-[var(--app-glass)] sm:h-11 sm:w-11" />
+                  <div className="h-11 w-11 rounded-xl border border-[var(--app-border)] bg-[var(--app-glass)] sm:rounded-full" />
                 )}
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-[var(--app-text)]">{track.title}</p>
-                  <p className="hidden truncate text-xs text-[var(--app-muted)] sm:block">{track.artist}</p>
+                  <p className="truncate text-xs text-[var(--app-muted)]">{track.artist}</p>
                 </div>
               </div>
 
               <input
+                data-player-action
                 type="range"
                 min={0}
-                max={duration || 0}
+                max={scrubMax}
                 step={0.01}
-                value={Math.min(currentTime, duration || 0)}
-                onChange={(event) => {
-                  const audio = audioRef.current;
-                  const nextValue = Number(event.target.value);
-                  setCurrentTime(nextValue);
-                  if (audio) audio.currentTime = nextValue;
-                }}
-                className="order-last h-1 w-full accent-white sm:order-none sm:block sm:flex-[1.3]"
+                value={scrubValue}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+                onInput={(event) => seekTo(Number(event.currentTarget.value))}
+                onChange={(event) => seekTo(Number(event.currentTarget.value))}
+                className="player-range order-last h-8 w-full sm:order-none sm:flex-[1.3]"
+                style={progressRangeStyle}
+                aria-label="Song position"
               />
 
               <div className="hidden items-center gap-2 font-mono text-xs text-white sm:flex">
@@ -620,16 +911,20 @@ export default function PlayerBridge() {
                 <span>{formatTime(duration)}</span>
               </div>
 
-              <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+              <div
+                data-player-action
+                onClick={stopMiniPlayerOpen}
+                className="flex shrink-0 items-center gap-1.5 sm:gap-1"
+              >
                 <button
                   type="button"
                   onClick={playPrevious}
-                  disabled={queueIndex === 0 && currentTime <= 3}
+                  disabled={!canPlayPrevious}
                   aria-label="Back"
                   title="Back"
-                  className="flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:w-10"
+                  className="flex h-12 w-12 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 sm:h-10 sm:w-10"
                 >
-                  <PlayerIcon name="previous" />
+                  <PlayerIcon name="previous" className="h-5 w-5" />
                 </button>
 
                 <button
@@ -637,29 +932,30 @@ export default function PlayerBridge() {
                   onClick={() => setIsPlaying((current) => !current)}
                   aria-label={isPlaying ? "Pause" : "Play"}
                   title={isPlaying ? "Pause" : "Play"}
-                  className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black"
+                  className="flex h-[52px] min-h-[52px] w-[52px] min-w-[52px] items-center justify-center rounded-full bg-white text-black shadow-[0_10px_30px_rgba(0,0,0,0.28)] sm:h-10 sm:min-h-10 sm:w-10 sm:min-w-10"
                 >
-                  <PlayerIcon name={isPlaying ? "pause" : "play"} className="h-4 w-4" />
+                  <PlayerIcon name={isPlaying ? "pause" : "play"} className="h-5 w-5 sm:h-4 sm:w-4" />
                 </button>
 
                 <button
                   type="button"
                   onClick={playNext}
-                  disabled={!isShuffleOn && queueIndex >= queue.length - 1}
+                  disabled={!canPlayNext}
                   aria-label="Skip"
                   title="Skip"
-                  className="flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:w-10"
+                  className="flex h-12 w-12 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 sm:h-10 sm:w-10"
                 >
-                  <PlayerIcon name="next" />
+                  <PlayerIcon name="next" className="h-5 w-5" />
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setIsShuffleOn((current) => !current)}
+                  onClick={toggleShuffle}
                   aria-label="Shuffle"
+                  aria-pressed={isShuffleOn}
                   title="Shuffle"
-                  className={`hidden h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/[0.08] sm:flex sm:h-10 sm:w-10 ${
-                    isShuffleOn ? "text-white" : "text-[var(--app-muted)]"
+                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/[0.08] sm:flex ${
+                    isShuffleOn ? "bg-white text-black" : "text-[var(--app-muted)]"
                   }`}
                 >
                   <PlayerIcon name="shuffle" />
@@ -669,26 +965,19 @@ export default function PlayerBridge() {
                   type="button"
                   onClick={() => setIsQueueOpen((current) => !current)}
                   aria-label="Queue"
+                  aria-pressed={isQueueOpen}
                   title="Queue"
-                  className="hidden h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] sm:flex sm:h-10 sm:w-10"
+                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/[0.08] sm:flex ${
+                    isQueueOpen ? "bg-white text-black" : "text-white"
+                  }`}
                 >
                   <PlayerIcon name="queue" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setIsControlsOpen((current) => !current)}
-                  aria-label="More player controls"
-                  title="More controls"
-                  className="flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] sm:hidden"
-                >
-                  <span aria-hidden="true" className="text-xl leading-none">...</span>
                 </button>
 
                 <div className="group relative hidden sm:block">
                   <button
                     type="button"
-                    className="flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] focus:bg-white/[0.08] sm:h-10 sm:w-10"
+                    className="flex h-10 w-10 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] focus:bg-white/[0.08]"
                     aria-label="Volume"
                     title="Volume"
                   >
@@ -701,16 +990,17 @@ export default function PlayerBridge() {
                       max={1}
                       step={0.01}
                       value={volume}
-                      onChange={(event) => setVolume(Number(event.target.value))}
+                      onChange={(event) => setVolume(Number(event.currentTarget.value))}
                       className="h-24 w-2 accent-white [direction:rtl] [writing-mode:vertical-lr]"
+                      aria-label="Volume"
                     />
                     <span className="text-[10px] text-[var(--app-muted)]">{Math.round(volume * 100)}</span>
                   </div>
                 </div>
               </div>
-            </>
-        </div>
-      </div>
+            </div>
+          </div>
+        </>
       ) : null}
     </>
   );
