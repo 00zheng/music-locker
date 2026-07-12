@@ -276,6 +276,13 @@ input[type="range"] {
   height: 0;
 }
 
+.queue-drag-surface,
+.queue-drag-surface * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
 .app-button {
   border-radius: 10px;
   border: 1px solid var(--app-border);
