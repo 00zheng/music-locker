@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import RegisterServiceWorker from "@/components/RegisterServiceWorker";
 import ThemeBoot from "@/components/ThemeBoot";
@@ -7,6 +7,14 @@ import PlayerBridge from "@/components/PlayerBridge";
 export const metadata: Metadata = {
   title: "Music Locker",
   description: "Self-hosted music bank with playlists, playback, and profiles.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

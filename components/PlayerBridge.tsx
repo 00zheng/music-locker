@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type PointerEvent,
 } from "react";
 
 type PlayerTrack = {
@@ -14,6 +15,8 @@ type PlayerTrack = {
   artist: string;
   coverDataUrl?: string | null;
   audioUrl: string;
+  sourceHref?: string;
+  sourceLabel?: string;
 };
 
 type PlayerRequest = {
@@ -105,17 +108,30 @@ function shuffleIndexes(indexes: number[]) {
   return shuffled;
 }
 
-function buildShuffleOrder(length: number, startIndex: number) {
-  if (length <= 0) {
-    return [];
+function sequentialIndexes(length: number) {
+  return Array.from({ length }, (_, index) => index);
+}
+
+function shuffleQueueFromIndex(tracks: PlayerTrack[], startIndex: number) {
+  if (tracks.length <= 1) {
+    return tracks;
   }
 
-  const safeStartIndex = Math.min(Math.max(startIndex, 0), length - 1);
-  const rest = Array.from({ length }, (_, index) => index).filter(
-    (index) => index !== safeStartIndex
-  );
+  const safeStartIndex = Math.min(Math.max(startIndex, 0), tracks.length - 1);
+  const restIndexes = sequentialIndexes(tracks.length).filter((index) => index !== safeStartIndex);
 
-  return [safeStartIndex, ...shuffleIndexes(rest)];
+  return [
+    tracks[safeStartIndex],
+    ...shuffleIndexes(restIndexes).map((index) => tracks[index]),
+  ];
+}
+
+function moveQueueItem<T>(items: T[], fromIndex: number, toIndex: number) {
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
 }
 
 function nextPlaybackMode(mode: PlaybackMode): PlaybackMode {
@@ -323,12 +339,22 @@ function isTextEntryTarget(target: EventTarget | null) {
 export default function PlayerBridge() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastProgressRenderAtRef = useRef(0);
+  const queueScrollRef = useRef<HTMLDivElement | null>(null);
+  const queueDragTimerRef = useRef<number | null>(null);
+  const queueDragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const queuedPointerTargetRef = useRef<HTMLElement | null>(null);
+  const draggedQueueIndexRef = useRef<number | null>(null);
+  const dragOverQueueIndexRef = useRef<number | null>(null);
+  const suppressQueueClickRef = useRef(false);
   const [queue, setQueue] = useState<PlayerTrack[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [isExpandedPlayerOpen, setIsExpandedPlayerOpen] = useState(false);
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("normal");
+  const [openQueueMenuIndex, setOpenQueueMenuIndex] = useState<number | null>(null);
+  const [draggedQueueIndex, setDraggedQueueIndex] = useState<number | null>(null);
+  const [dragOverQueueIndex, setDragOverQueueIndex] = useState<number | null>(null);
   const [shuffleOrder, setShuffleOrder] = useState<number[]>([]);
   const [shuffleCursor, setShuffleCursor] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -338,6 +364,9 @@ export default function PlayerBridge() {
   const isShuffleOn = playbackMode === "shuffle";
   const isRepeatAllOn = playbackMode === "repeat-all";
   const isRepeatOneOn = playbackMode === "repeat-one";
+  const displayedQueueItems = isRepeatOneOn && track
+    ? [{ track, queueIndex }]
+    : queue.map((queuedTrack, index) => ({ track: queuedTrack, queueIndex: index }));
   const shufflePosition = isShuffleOn
     ? shuffleOrder[shuffleCursor] === queueIndex
       ? shuffleCursor
@@ -348,7 +377,7 @@ export default function PlayerBridge() {
     ? shufflePosition >= 0 && shufflePosition < shuffleOrder.length - 1
     : queueIndex < queue.length - 1 || (isRepeatAllOn && queue.length > 1);
   const canPlayPrevious = currentTime > 3 || hasPreviousTrack || (isRepeatAllOn && queue.length > 1);
-  const canPlayNext = hasNextTrack || (isRepeatOneOn && queue.length > 1);
+  const canPlayNext = hasNextTrack || isRepeatOneOn;
   const scrubMax = duration > 0 ? duration : Math.max(currentTime, 0);
   const scrubValue = Math.min(currentTime, scrubMax);
   const progressPercent =
@@ -380,6 +409,7 @@ export default function PlayerBridge() {
 
   const startTrackAt = useCallback((index: number, nextShuffleCursor?: number) => {
     const safeIndex = Math.min(Math.max(index, 0), Math.max(queue.length - 1, 0));
+    const nextTrack = queue[safeIndex] || null;
 
     setQueueIndex(safeIndex);
     resetPlaybackProgress();
@@ -389,19 +419,39 @@ export default function PlayerBridge() {
     }
 
     setIsPlaying(true);
-  }, [queue.length, resetPlaybackProgress]);
+    setOpenQueueMenuIndex(null);
+
+    const audio = audioRef.current;
+
+    if (audio && nextTrack) {
+      audio.src = nextTrack.audioUrl;
+      audio.currentTime = 0;
+      lastProgressRenderAtRef.current = 0;
+      dispatchCurrentTrack(nextTrack.id);
+      void audio.play().catch(() => setIsPlaying(false));
+    }
+  }, [queue, resetPlaybackProgress]);
 
   const cyclePlaybackMode = useCallback(() => {
     const nextMode = nextPlaybackMode(playbackMode);
 
     if (nextMode === "shuffle" && queue.length > 0) {
-      setShuffleOrder(buildShuffleOrder(queue.length, queueIndex));
+      setQueue((currentQueue) => shuffleQueueFromIndex(currentQueue, queueIndex));
+      setQueueIndex(0);
+      setShuffleOrder(sequentialIndexes(queue.length));
       setShuffleCursor(0);
+      setOpenQueueMenuIndex(null);
+      setPlaybackMode(nextMode);
+      return;
     }
 
     if (playbackMode === "shuffle" && nextMode !== "shuffle") {
       setShuffleOrder([]);
       setShuffleCursor(0);
+    }
+
+    if (nextMode === "repeat-one") {
+      setOpenQueueMenuIndex(null);
     }
 
     setPlaybackMode(nextMode);
@@ -414,11 +464,12 @@ export default function PlayerBridge() {
     resetPlaybackProgress();
 
     if (isShuffleOn) {
-      setShuffleOrder(buildShuffleOrder(queue.length, safeIndex));
-      setShuffleCursor(0);
+      setShuffleOrder(sequentialIndexes(queue.length));
+      setShuffleCursor(safeIndex);
     }
 
     setIsPlaying(true);
+    setOpenQueueMenuIndex(null);
   }, [isShuffleOn, queue.length, resetPlaybackProgress]);
 
   useEffect(() => {
@@ -427,18 +478,22 @@ export default function PlayerBridge() {
       const nextQueue = customEvent.detail.tracks;
       const startIndex = Math.min(Math.max(customEvent.detail.startIndex, 0), nextQueue.length - 1);
 
-      setQueue(nextQueue);
-      setQueueIndex(startIndex);
-      resetPlaybackProgress();
-
       if (playbackMode === "shuffle") {
-        setShuffleOrder(buildShuffleOrder(nextQueue.length, startIndex));
+        const shuffledQueue = shuffleQueueFromIndex(nextQueue, startIndex);
+
+        setQueue(shuffledQueue);
+        setQueueIndex(0);
+        setShuffleOrder(sequentialIndexes(shuffledQueue.length));
         setShuffleCursor(0);
       } else {
+        setQueue(nextQueue);
+        setQueueIndex(startIndex);
         setShuffleOrder([]);
         setShuffleCursor(0);
       }
 
+      resetPlaybackProgress();
+      setOpenQueueMenuIndex(null);
       setIsPlaying(true);
     }
 
@@ -460,12 +515,20 @@ export default function PlayerBridge() {
           setIsPlaying(true);
 
           if (playbackMode === "shuffle") {
-            setShuffleOrder(buildShuffleOrder(nextQueue.length, 0));
+            const shuffledQueue = shuffleQueueFromIndex(nextQueue, 0);
+
+            setShuffleOrder(sequentialIndexes(shuffledQueue.length));
             setShuffleCursor(0);
+            return shuffledQueue;
           }
         } else if (playbackMode === "shuffle") {
-          const appendedIndexes = incomingTracks.map((_, index) => currentQueue.length + index);
-          setShuffleOrder((currentOrder) => [...currentOrder, ...shuffleIndexes(appendedIndexes)]);
+          const shuffledIncoming = shuffleIndexes(incomingTracks.map((_, index) => index)).map(
+            (incomingIndex) => incomingTracks[incomingIndex]
+          );
+          const shuffledQueue = [...currentQueue, ...shuffledIncoming];
+
+          setShuffleOrder(sequentialIndexes(shuffledQueue.length));
+          return shuffledQueue;
         }
 
         return nextQueue;
@@ -609,6 +672,18 @@ export default function PlayerBridge() {
       return false;
     }
 
+    if (isRepeatOneOn) {
+      const audio = audioRef.current;
+
+      if (audio) {
+        audio.currentTime = 0;
+        setCurrentTime(0);
+        void audio.play().catch(() => setIsPlaying(false));
+      }
+
+      return true;
+    }
+
     if (isShuffleOn) {
       const currentShuffleCursor =
         shuffleOrder[shuffleCursor] === queueIndex ? shuffleCursor : shuffleOrder.indexOf(queueIndex);
@@ -635,7 +710,7 @@ export default function PlayerBridge() {
 
     startTrackAt(queueIndex + 1);
     return true;
-  }, [isRepeatAllOn, isShuffleOn, queue.length, queueIndex, shuffleCursor, shuffleOrder, startTrackAt]);
+  }, [isRepeatAllOn, isRepeatOneOn, isShuffleOn, queue.length, queueIndex, shuffleCursor, shuffleOrder, startTrackAt]);
 
   const playNext = useCallback(() => {
     moveToNextTrack();
@@ -751,7 +826,199 @@ export default function PlayerBridge() {
   function collapseExpandedPlayer() {
     setIsExpandedPlayerOpen(false);
     setIsQueueOpen(false);
+    setOpenQueueMenuIndex(null);
   }
+
+  const clearQueueDragTimer = useCallback(() => {
+    if (queueDragTimerRef.current !== null) {
+      window.clearTimeout(queueDragTimerRef.current);
+      queueDragTimerRef.current = null;
+    }
+  }, []);
+
+  const resetQueueDrag = useCallback(() => {
+    clearQueueDragTimer();
+    queueDragStartRef.current = null;
+    queuedPointerTargetRef.current = null;
+    draggedQueueIndexRef.current = null;
+    dragOverQueueIndexRef.current = null;
+    setDraggedQueueIndex(null);
+    setDragOverQueueIndex(null);
+  }, [clearQueueDragTimer]);
+
+  const reorderQueue = useCallback((fromIndex: number, toIndex: number) => {
+    if (isRepeatOneOn || fromIndex === toIndex) {
+      return;
+    }
+
+    setQueue((currentQueue) => {
+      if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= currentQueue.length ||
+        toIndex >= currentQueue.length
+      ) {
+        return currentQueue;
+      }
+
+      const currentTrack = currentQueue[queueIndex] || null;
+      const nextQueue = moveQueueItem(currentQueue, fromIndex, toIndex);
+      const nextQueueIndex = currentTrack ? Math.max(0, nextQueue.indexOf(currentTrack)) : 0;
+
+      setQueueIndex(nextQueueIndex);
+
+      if (playbackMode === "shuffle") {
+        setShuffleOrder(sequentialIndexes(nextQueue.length));
+        setShuffleCursor(nextQueueIndex);
+      }
+
+      return nextQueue;
+    });
+  }, [isRepeatOneOn, playbackMode, queueIndex]);
+
+  const removeQueuedTrack = useCallback((index: number) => {
+    setOpenQueueMenuIndex(null);
+
+    setQueue((currentQueue) => {
+      if (index < 0 || index >= currentQueue.length) {
+        return currentQueue;
+      }
+
+      const nextQueue = currentQueue.filter((_, currentIndex) => currentIndex !== index);
+
+      if (nextQueue.length === 0) {
+        setQueueIndex(0);
+        setShuffleOrder([]);
+        setShuffleCursor(0);
+        setIsPlaying(false);
+        resetPlaybackProgress();
+        dispatchCurrentTrack(null);
+        return nextQueue;
+      }
+
+      const nextQueueIndex =
+        index === queueIndex
+          ? Math.min(index, nextQueue.length - 1)
+          : index < queueIndex
+            ? Math.max(0, queueIndex - 1)
+            : queueIndex;
+
+      setQueueIndex(nextQueueIndex);
+
+      if (index === queueIndex) {
+        resetPlaybackProgress();
+        setIsPlaying(true);
+      }
+
+      if (playbackMode === "shuffle") {
+        setShuffleOrder(sequentialIndexes(nextQueue.length));
+        setShuffleCursor(nextQueueIndex);
+      }
+
+      return nextQueue;
+    });
+  }, [playbackMode, queueIndex, resetPlaybackProgress]);
+
+  const goToQueuedTrackProject = useCallback((queuedTrack: PlayerTrack) => {
+    setOpenQueueMenuIndex(null);
+    setIsExpandedPlayerOpen(false);
+    setIsQueueOpen(false);
+    window.location.assign(queuedTrack.sourceHref || "/library");
+  }, []);
+
+  const beginQueueDrag = useCallback((index: number, event: PointerEvent<HTMLElement>) => {
+    if (isRepeatOneOn || event.button !== 0) {
+      return;
+    }
+
+    const target = event.target;
+
+    if (target instanceof Element && target.closest("[data-queue-action]")) {
+      return;
+    }
+
+    clearQueueDragTimer();
+    setOpenQueueMenuIndex(null);
+    queueDragStartRef.current = { x: event.clientX, y: event.clientY };
+    queuedPointerTargetRef.current = event.currentTarget;
+
+    queueDragTimerRef.current = window.setTimeout(() => {
+      draggedQueueIndexRef.current = index;
+      dragOverQueueIndexRef.current = index;
+      setDraggedQueueIndex(index);
+      setDragOverQueueIndex(index);
+      try {
+        queuedPointerTargetRef.current?.setPointerCapture(event.pointerId);
+      } catch {
+        // The pointer may be gone if the OS cancels a long press.
+      }
+    }, 260);
+  }, [clearQueueDragTimer, isRepeatOneOn]);
+
+  const moveQueueDrag = useCallback((event: PointerEvent<HTMLElement>) => {
+    const dragStart = queueDragStartRef.current;
+
+    if (!dragStart) {
+      return;
+    }
+
+    const deltaX = Math.abs(event.clientX - dragStart.x);
+    const deltaY = Math.abs(event.clientY - dragStart.y);
+
+    if (draggedQueueIndexRef.current === null) {
+      if (deltaX > 10 || deltaY > 10) {
+        resetQueueDrag();
+      }
+
+      return;
+    }
+
+    event.preventDefault();
+
+    const elementAtPoint = document.elementFromPoint(event.clientX, event.clientY);
+    const targetRow = elementAtPoint instanceof Element
+      ? elementAtPoint.closest("[data-queue-index]")
+      : null;
+    const nextDragOverIndex = targetRow instanceof HTMLElement
+      ? Number(targetRow.dataset.queueIndex)
+      : Number.NaN;
+
+    if (Number.isInteger(nextDragOverIndex)) {
+      dragOverQueueIndexRef.current = nextDragOverIndex;
+      setDragOverQueueIndex(nextDragOverIndex);
+    }
+
+    const scrollElement = queueScrollRef.current;
+
+    if (scrollElement) {
+      const bounds = scrollElement.getBoundingClientRect();
+      const edgeSize = 52;
+
+      if (event.clientY < bounds.top + edgeSize) {
+        scrollElement.scrollBy({ top: -12, behavior: "auto" });
+      } else if (event.clientY > bounds.bottom - edgeSize) {
+        scrollElement.scrollBy({ top: 12, behavior: "auto" });
+      }
+    }
+  }, [resetQueueDrag]);
+
+  const endQueueDrag = useCallback((event: PointerEvent<HTMLElement>) => {
+    const fromIndex = draggedQueueIndexRef.current;
+    const toIndex = dragOverQueueIndexRef.current;
+
+    if (queuedPointerTargetRef.current?.hasPointerCapture(event.pointerId)) {
+      queuedPointerTargetRef.current.releasePointerCapture(event.pointerId);
+    }
+
+    resetQueueDrag();
+
+    if (fromIndex !== null && toIndex !== null) {
+      suppressQueueClickRef.current = true;
+      reorderQueue(fromIndex, toIndex);
+    }
+  }, [reorderQueue, resetQueueDrag]);
+
+  useEffect(() => resetQueueDrag, [resetQueueDrag]);
 
   const renderExpandedControls = (isCompact = false) => (
     <div className="flex items-center justify-between">
@@ -827,47 +1094,112 @@ export default function PlayerBridge() {
         <div className="min-w-0">
           <p className="text-xl font-semibold text-white">Queue</p>
           <p className="mt-0.5 text-xs text-[var(--app-muted)]">
-            {queue.length} track{queue.length === 1 ? "" : "s"} in queue
+            {displayedQueueItems.length} track{displayedQueueItems.length === 1 ? "" : "s"} in queue
           </p>
         </div>
         <span className="rounded-full border border-white/[0.1] bg-white/[0.06] px-2.5 py-1 font-mono text-xs text-white">
-          {queueIndex + 1}/{queue.length}
+          {isRepeatOneOn ? 1 : queueIndex + 1}/{displayedQueueItems.length}
         </span>
       </div>
-      <div className={`${listClassName} overflow-y-auto p-2`}>
-        {queue.map((queuedTrack, index) => (
-          <button
-            key={`${queuedTrack.id}-${index}`}
-            type="button"
-            onClick={() => selectQueuedTrack(index)}
-            className={`flex min-h-16 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition hover:bg-white/[0.08] ${
-              index === queueIndex ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-[var(--app-muted)]"
+      <div ref={queueScrollRef} className={`${listClassName} scrollbar-none touch-pan-y overflow-y-auto overscroll-contain p-2 pb-24`}>
+        {displayedQueueItems.map(({ track: queuedTrack, queueIndex: actualIndex }) => (
+          <div
+            key={`${queuedTrack.id}-${actualIndex}`}
+            data-queue-index={actualIndex}
+            onPointerDown={(event) => beginQueueDrag(actualIndex, event)}
+            onPointerMove={moveQueueDrag}
+            onPointerUp={endQueueDrag}
+            onPointerCancel={endQueueDrag}
+            className={`relative flex min-h-16 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition duration-200 ease-out ${
+              actualIndex === queueIndex ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-[var(--app-muted)] hover:bg-white/[0.08]"
+            } ${
+              draggedQueueIndex === actualIndex ? "scale-[0.985] opacity-60" : ""
+            } ${
+              dragOverQueueIndex === actualIndex && draggedQueueIndex !== null && draggedQueueIndex !== actualIndex
+                ? "ring-1 ring-white/40"
+                : ""
             }`}
           >
-            <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/[0.06] font-mono text-xs text-white shadow-[0_10px_30px_rgba(0,0,0,0.22)]">
-              {queuedTrack.coverDataUrl ? (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img src={queuedTrack.coverDataUrl} alt="" className="h-full w-full object-cover" />
-              ) : (
-                index + 1
-              )}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-base font-semibold text-white">{queuedTrack.title}</span>
-              <span className="block truncate text-xs text-[var(--app-muted)]">{queuedTrack.artist}</span>
-            </span>
-            {index === queueIndex ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (suppressQueueClickRef.current) {
+                  suppressQueueClickRef.current = false;
+                  return;
+                }
+
+                selectQueuedTrack(actualIndex);
+              }}
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+            >
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/[0.06] font-mono text-xs text-white shadow-[0_10px_30px_rgba(0,0,0,0.22)]">
+                {queuedTrack.coverDataUrl ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img src={queuedTrack.coverDataUrl} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  actualIndex + 1
+                )}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-base font-semibold text-white">{queuedTrack.title}</span>
+                <span className="block truncate text-xs text-[var(--app-muted)]">{queuedTrack.artist}</span>
+              </span>
+            </button>
+
+            {actualIndex === queueIndex ? (
               <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-black">
                 Now
               </span>
-            ) : (
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 text-[var(--app-muted)]" aria-hidden="true">
+            ) : null}
+
+            <button
+              type="button"
+              data-queue-action
+              onClick={() => setOpenQueueMenuIndex((currentIndex) => (currentIndex === actualIndex ? null : actualIndex))}
+              className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+              aria-label={`Open queue menu for ${queuedTrack.title}`}
+              aria-expanded={openQueueMenuIndex === actualIndex}
+              title="Queue menu"
+            >
+              <span className="h-1 w-1 rounded-full bg-current" />
+              <span className="h-1 w-1 rounded-full bg-current" />
+              <span className="h-1 w-1 rounded-full bg-current" />
+            </button>
+
+            {openQueueMenuIndex === actualIndex ? (
+              <div
+                data-queue-action
+                className="absolute right-3 top-14 z-20 w-48 overflow-hidden rounded-2xl border border-white/[0.1] bg-[rgba(20,20,20,0.94)] p-2 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl"
+              >
+                <button
+                  type="button"
+                  onClick={() => goToQueuedTrackProject(queuedTrack)}
+                  className="flex min-h-10 w-full items-center rounded-xl px-3 py-2 text-left text-white transition hover:bg-white/[0.08]"
+                >
+                  Go to project
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeQueuedTrack(actualIndex)}
+                  className="flex min-h-10 w-full items-center rounded-xl px-3 py-2 text-left text-red-300 transition hover:bg-red-500/[0.12]"
+                >
+                  Remove from queue
+                </button>
+              </div>
+            ) : null}
+
+            {draggedQueueIndex === actualIndex ? (
+              <span className="pointer-events-none absolute inset-0 rounded-2xl border border-white/30" aria-hidden="true" />
+            ) : null}
+
+            {draggedQueueIndex !== null && !isRepeatOneOn ? (
+              <span className="pointer-events-none absolute left-1 top-1/2 flex -translate-y-1/2 flex-col gap-0.5 text-white/30" aria-hidden="true">
                 <span className="h-1 w-1 rounded-full bg-current" />
                 <span className="h-1 w-1 rounded-full bg-current" />
                 <span className="h-1 w-1 rounded-full bg-current" />
               </span>
-            )}
-          </button>
+            ) : null}
+          </div>
         ))}
       </div>
     </div>
@@ -877,7 +1209,7 @@ export default function PlayerBridge() {
     <>
       <audio
         ref={audioRef}
-        preload="metadata"
+        preload="auto"
         onTimeUpdate={() => {
           const audio = audioRef.current;
           if (!audio) return;

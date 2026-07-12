@@ -396,6 +396,8 @@ export default function Navbar() {
           artist: result.artist,
           coverDataUrl: result.coverDataUrl || null,
           audioUrl: data.signedUrl,
+          sourceHref: result.href,
+          sourceLabel: "Project",
         },
       ],
       0

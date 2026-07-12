@@ -1250,6 +1250,8 @@ export default function LibraryScreen({ playlistId }: Props) {
       artist: trackMetadataById[track.id]?.artist || track.artist || playlist?.name || activePlaylist?.name || "Unknown artist",
       coverDataUrl: trackMetadataById[track.id]?.coverDataUrl || playlistCoverUrl || activePlaylistCoverUrl,
       audioUrl: track.offlineUrl || track.signedUrl || "",
+      sourceHref: playlist && playlist.id !== ALL_TRACKS_PLAYLIST_ID ? `/library/${playlist.id}` : "/library",
+      sourceLabel: playlist?.name || "Library",
     };
   }
 
