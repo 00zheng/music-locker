@@ -10,6 +10,7 @@ import {
   type CSSProperties,
   type MouseEvent,
   type PointerEvent,
+  type TouchEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
@@ -386,6 +387,7 @@ export default function PlayerBridge() {
   const queueDragTargetRef = useRef<HTMLElement | null>(null);
   const queueAutoScrollFrameRef = useRef<number | null>(null);
   const queueItemRectsBeforeReorderRef = useRef<Map<string, DOMRect> | null>(null);
+  const queueReorderLockedRef = useRef(false);
   const displayedQueueItemsRef = useRef<QueueDisplayItem[]>([]);
   const suppressQueueClickRef = useRef(false);
   const bodyUserSelectBeforeDragRef = useRef<string | null>(null);
@@ -525,10 +527,12 @@ export default function PlayerBridge() {
     const previousRects = queueItemRectsBeforeReorderRef.current;
 
     if (!previousRects) {
+      queueReorderLockedRef.current = false;
       return;
     }
 
     queueItemRectsBeforeReorderRef.current = null;
+    queueReorderLockedRef.current = false;
 
     queueItemRefs.current.forEach((node, key) => {
       if (key === queueDragState?.key) {
@@ -1016,34 +1020,43 @@ export default function PlayerBridge() {
       ...currentDrag,
       currentY: clientY,
     };
-    const draggedCenterY = clientY - currentDrag.offsetY + currentDrag.rowHeight / 2;
-    const sourceItems = displayedQueueItemsRef.current.filter((item) => item.source === currentDrag.source);
-    let closestIndex = currentDrag.index;
-    let closestDistance = Number.POSITIVE_INFINITY;
 
-    sourceItems.forEach((item) => {
-      const node = queueItemRefs.current.get(item.key);
+    if (!queueReorderLockedRef.current) {
+      const draggedCenterY = clientY - currentDrag.offsetY + currentDrag.rowHeight / 2;
+      const sourceItems = displayedQueueItemsRef.current
+        .filter((item) => item.source === currentDrag.source)
+        .sort((firstItem, secondItem) => firstItem.index - secondItem.index);
+      let targetIndex = 0;
 
-      if (!node) {
-        return;
+      sourceItems.forEach((item) => {
+        if (item.key === currentDrag.key) {
+          return;
+        }
+
+        const node = queueItemRefs.current.get(item.key);
+
+        if (!node) {
+          return;
+        }
+
+        const rect = node.getBoundingClientRect();
+        const itemCenterY = rect.top + rect.height / 2;
+
+        if (draggedCenterY > itemCenterY) {
+          targetIndex += 1;
+        }
+      });
+
+      targetIndex = Math.min(Math.max(targetIndex, 0), Math.max(sourceItems.length - 1, 0));
+
+      if (targetIndex !== currentDrag.index) {
+        queueReorderLockedRef.current = true;
+        reorderQueue(
+          { source: currentDrag.source, index: currentDrag.index },
+          { source: currentDrag.source, index: targetIndex }
+        );
+        nextDrag.index = targetIndex;
       }
-
-      const rect = node.getBoundingClientRect();
-      const itemCenterY = rect.top + rect.height / 2;
-      const distance = Math.abs(draggedCenterY - itemCenterY);
-
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        closestIndex = item.index;
-      }
-    });
-
-    if (closestIndex !== currentDrag.index) {
-      reorderQueue(
-        { source: currentDrag.source, index: currentDrag.index },
-        { source: currentDrag.source, index: closestIndex }
-      );
-      nextDrag.index = closestIndex;
     }
 
     queueDragRef.current = nextDrag;
@@ -1126,7 +1139,7 @@ export default function PlayerBridge() {
   }, [clearQueueLongPressTimer, stopQueueAutoScroll]);
 
   const beginQueueLongPress = useCallback((item: QueueDisplayItem, event: PointerEvent<HTMLDivElement>) => {
-    if (isRepeatOneOn || item.source === "current" || event.button !== 0) {
+    if (event.pointerType === "touch" || isRepeatOneOn || item.source === "current" || event.button !== 0) {
       return;
     }
 
@@ -1198,7 +1211,80 @@ export default function PlayerBridge() {
     }, 240);
   }, [clearQueueLongPressTimer, closeQueueMenu, isRepeatOneOn, startQueueAutoScroll]);
 
+  const beginQueueTouchLongPress = useCallback((item: QueueDisplayItem, event: TouchEvent<HTMLDivElement>) => {
+    if (isRepeatOneOn || item.source === "current" || event.touches.length !== 1) {
+      return;
+    }
+
+    const target = event.target;
+
+    if (target instanceof Element && target.closest("[data-queue-action]")) {
+      return;
+    }
+
+    const touch = event.touches[0];
+
+    clearQueueLongPressTimer();
+    closeQueueMenu();
+
+    const pressState: QueuePressState = {
+      item,
+      pointerId: touch.identifier,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      currentY: touch.clientY,
+      target: event.currentTarget,
+    };
+
+    queuePressRef.current = pressState;
+    queueLongPressTimerRef.current = window.setTimeout(() => {
+      const queuedPress = queuePressRef.current;
+
+      if (!queuedPress || queuedPress.pointerId !== pressState.pointerId) {
+        return;
+      }
+
+      const row = queueItemRefs.current.get(item.key);
+
+      if (!row || (item.source !== "manual" && item.source !== "context")) {
+        return;
+      }
+
+      const rowBounds = row.getBoundingClientRect();
+      const nextDrag: QueueDragState = {
+        key: item.key,
+        source: item.source,
+        index: item.index,
+        pointerId: touch.identifier,
+        rowLeft: rowBounds.left,
+        rowWidth: rowBounds.width,
+        rowHeight: rowBounds.height,
+        offsetY: queuedPress.startY - rowBounds.top,
+        currentY: queuedPress.currentY,
+        track: item.track,
+      };
+
+      queueDragRef.current = nextDrag;
+      queueDragTargetRef.current = queuedPress.target;
+      setQueueDragState(nextDrag);
+      bodyUserSelectBeforeDragRef.current = document.body.style.userSelect;
+      document.body.style.userSelect = "none";
+      if (queueScrollRef.current) {
+        queueTouchActionBeforeDragRef.current = queueScrollRef.current.style.touchAction;
+        queueScrollRef.current.style.touchAction = "none";
+      }
+
+      (navigator as Navigator & { vibrate?: (pattern: number) => boolean }).vibrate?.(8);
+
+      startQueueAutoScroll();
+    }, 260);
+  }, [clearQueueLongPressTimer, closeQueueMenu, isRepeatOneOn, startQueueAutoScroll]);
+
   const moveQueueLongPress = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") {
+      return;
+    }
+
     const pressState = queuePressRef.current;
 
     if (!pressState || pressState.pointerId !== event.pointerId) {
@@ -1223,7 +1309,44 @@ export default function PlayerBridge() {
     updateQueueDragPosition(event.clientY);
   }, [clearQueueLongPressTimer, updateQueueDragPosition]);
 
+  const moveQueueTouchLongPress = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    const pressState = queuePressRef.current;
+
+    if (!pressState) {
+      return;
+    }
+
+    const touch = Array.from(event.touches).find((currentTouch) => (
+      currentTouch.identifier === pressState.pointerId
+    ));
+
+    if (!touch) {
+      return;
+    }
+
+    pressState.currentY = touch.clientY;
+
+    if (!queueDragRef.current) {
+      const deltaX = Math.abs(touch.clientX - pressState.startX);
+      const deltaY = Math.abs(touch.clientY - pressState.startY);
+
+      if (deltaX > 18 || deltaY > 18) {
+        clearQueueLongPressTimer();
+        queuePressRef.current = null;
+      }
+
+      return;
+    }
+
+    event.preventDefault();
+    updateQueueDragPosition(touch.clientY);
+  }, [clearQueueLongPressTimer, updateQueueDragPosition]);
+
   const endQueueLongPress = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") {
+      return;
+    }
+
     const drag = queueDragRef.current;
     const pressState = queuePressRef.current;
 
@@ -1234,6 +1357,25 @@ export default function PlayerBridge() {
     }
 
     if (pressState?.pointerId === event.pointerId) {
+      clearQueueLongPressTimer();
+      queuePressRef.current = null;
+    }
+  }, [clearQueueLongPressTimer, finishQueueDrag]);
+
+  const endQueueTouchLongPress = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    const drag = queueDragRef.current;
+    const pressState = queuePressRef.current;
+    const changedTouch = pressState
+      ? Array.from(event.changedTouches).find((touch) => touch.identifier === pressState.pointerId)
+      : null;
+
+    if (drag && changedTouch && drag.pointerId === changedTouch.identifier) {
+      event.preventDefault();
+      finishQueueDrag();
+      return;
+    }
+
+    if (pressState && changedTouch) {
       clearQueueLongPressTimer();
       queuePressRef.current = null;
     }
@@ -1457,6 +1599,10 @@ export default function PlayerBridge() {
               onPointerMove={moveQueueLongPress}
               onPointerUp={endQueueLongPress}
               onPointerCancel={endQueueLongPress}
+              onTouchStart={(event) => beginQueueTouchLongPress(item, event)}
+              onTouchMove={moveQueueTouchLongPress}
+              onTouchEnd={endQueueTouchLongPress}
+              onTouchCancel={endQueueTouchLongPress}
               className={`relative flex min-h-16 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-[background-color,box-shadow,opacity,transform] duration-200 ease-out ${
                 item.source === "current" ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-[var(--app-muted)] hover:bg-white/[0.08]"
               } ${isDraggedItem ? "bg-white/[0.08] opacity-30 ring-1 ring-white/[0.08]" : "opacity-100"}`}
@@ -1503,6 +1649,13 @@ export default function PlayerBridge() {
                 }}
                 onPointerUp={(event) => event.stopPropagation()}
                 onPointerCancel={(event) => event.stopPropagation()}
+                onTouchStart={(event) => {
+                  event.stopPropagation();
+                  clearQueueLongPressTimer();
+                  queuePressRef.current = null;
+                }}
+                onTouchEnd={(event) => event.stopPropagation()}
+                onTouchCancel={(event) => event.stopPropagation()}
                 onClick={(event) => toggleQueueMenu(item, event)}
                 className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
                 aria-label={`Open queue menu for ${item.track.title}`}
