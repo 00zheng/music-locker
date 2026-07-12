@@ -3,9 +3,13 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent,
+  type PointerEvent,
 } from "react";
 import { useRouter } from "next/navigation";
 
@@ -26,11 +30,44 @@ type PlayerRequest = {
 
 type RepeatMode = "none" | "all" | "one";
 type QueueSource = "current" | "manual" | "context";
+type SortableQueueSource = "manual" | "context";
+
+type QueueEntry = {
+  entryId: string;
+  track: PlayerTrack;
+};
 
 type QueueDisplayItem = {
   key: string;
   source: QueueSource;
   index: number;
+  track: PlayerTrack;
+};
+
+type QueueDragTarget = {
+  source: SortableQueueSource;
+  index: number;
+};
+
+type QueuePressState = {
+  item: QueueDisplayItem;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  currentY: number;
+  target: HTMLElement;
+};
+
+type QueueDragState = {
+  key: string;
+  source: SortableQueueSource;
+  index: number;
+  pointerId: number;
+  rowLeft: number;
+  rowWidth: number;
+  rowHeight: number;
+  offsetY: number;
+  currentY: number;
   track: PlayerTrack;
 };
 
@@ -114,8 +151,12 @@ function sequentialIndexes(length: number) {
   return Array.from({ length }, (_, index) => index);
 }
 
+function shuffleItems<T>(items: T[]) {
+  return shuffleIndexes(sequentialIndexes(items.length)).map((index) => items[index]);
+}
+
 function shuffleTracks(tracks: PlayerTrack[]) {
-  return shuffleIndexes(sequentialIndexes(tracks.length)).map((index) => tracks[index]);
+  return shuffleItems(tracks);
 }
 
 function moveQueueItem<T>(items: T[], fromIndex: number, toIndex: number) {
@@ -161,7 +202,9 @@ function PlayerIcon({
     | "repeatOne"
     | "volume"
     | "chevronUp"
-    | "chevronDown";
+    | "chevronDown"
+    | "external"
+    | "minusCircle";
   className?: string;
 }) {
   const paths = {
@@ -236,6 +279,18 @@ function PlayerIcon({
     ),
     chevronUp: <path d="m6 15 6-6 6 6" />,
     chevronDown: <path d="m6 9 6 6 6-6" />,
+    external: (
+      <>
+        <path d="M7 17 17 7" />
+        <path d="M8 7h9v9" />
+      </>
+    ),
+    minusCircle: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M8 12h8" />
+      </>
+    ),
   };
 
   return (
@@ -322,9 +377,20 @@ export default function PlayerBridge() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastProgressRenderAtRef = useRef(0);
   const queueScrollRef = useRef<HTMLDivElement | null>(null);
+  const queueItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const queueEntryCounterRef = useRef(0);
+  const queueLongPressTimerRef = useRef<number | null>(null);
+  const queuePressRef = useRef<QueuePressState | null>(null);
+  const queueDragRef = useRef<QueueDragState | null>(null);
+  const queueDragTargetRef = useRef<HTMLElement | null>(null);
+  const queueAutoScrollFrameRef = useRef<number | null>(null);
+  const queueItemRectsBeforeReorderRef = useRef<Map<string, DOMRect> | null>(null);
+  const displayedQueueItemsRef = useRef<QueueDisplayItem[]>([]);
+  const suppressQueueClickRef = useRef(false);
+  const bodyUserSelectBeforeDragRef = useRef<string | null>(null);
   const [currentTrack, setCurrentTrack] = useState<PlayerTrack | null>(null);
-  const [manualQueue, setManualQueue] = useState<PlayerTrack[]>([]);
-  const [contextQueue, setContextQueue] = useState<PlayerTrack[]>([]);
+  const [manualQueue, setManualQueue] = useState<QueueEntry[]>([]);
+  const [contextQueue, setContextQueue] = useState<QueueEntry[]>([]);
   const [contextCycle, setContextCycle] = useState<PlayerTrack[]>([]);
   const [history, setHistory] = useState<PlayerTrack[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -333,29 +399,53 @@ export default function PlayerBridge() {
   const [isShuffleOn, setIsShuffleOn] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("none");
   const [openQueueMenuKey, setOpenQueueMenuKey] = useState<string | null>(null);
+  const [queueMenuPosition, setQueueMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [queueDragState, setQueueDragState] = useState<QueueDragState | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.9);
+  const createQueueEntry = useCallback((queuedTrack: PlayerTrack): QueueEntry => {
+    const entryNumber = queueEntryCounterRef.current;
+
+    queueEntryCounterRef.current += 1;
+
+    return {
+      entryId: `queue-${entryNumber}-${queuedTrack.id}`,
+      track: queuedTrack,
+    };
+  }, []);
+  const createQueueEntries = useCallback((tracks: PlayerTrack[]) => (
+    tracks.map((queuedTrack) => createQueueEntry(queuedTrack))
+  ), [createQueueEntry]);
   const track = currentTrack;
   const isRepeatAllOn = repeatMode === "all";
   const isRepeatOneOn = repeatMode === "one";
-  const displayedQueueItems: QueueDisplayItem[] = isRepeatOneOn && track
-    ? [{ key: "current", source: "current", index: 0, track }]
-    : [
-        ...(track ? [{ key: "current", source: "current" as const, index: 0, track }] : []),
-        ...manualQueue.map((queuedTrack, index) => ({
-          key: `manual-${index}-${queuedTrack.id}`,
-          source: "manual" as const,
-          index,
-          track: queuedTrack,
-        })),
-        ...contextQueue.map((queuedTrack, index) => ({
-          key: `context-${index}-${queuedTrack.id}`,
-          source: "context" as const,
-          index,
-          track: queuedTrack,
-        })),
-      ];
+  const displayedQueueItems: QueueDisplayItem[] = useMemo(() => {
+    if (isRepeatOneOn && track) {
+      return [{ key: "current", source: "current", index: 0, track }];
+    }
+
+    return [
+      ...(track ? [{ key: "current", source: "current" as const, index: 0, track }] : []),
+      ...manualQueue.map((queuedEntry, index) => ({
+        key: queuedEntry.entryId,
+        source: "manual" as const,
+        index,
+        track: queuedEntry.track,
+      })),
+      ...contextQueue.map((queuedEntry, index) => ({
+        key: queuedEntry.entryId,
+        source: "context" as const,
+        index,
+        track: queuedEntry.track,
+      })),
+    ];
+  }, [contextQueue, isRepeatOneOn, manualQueue, track]);
+  const openQueueMenuItem = useMemo(() => (
+    openQueueMenuKey
+      ? displayedQueueItems.find((item) => item.key === openQueueMenuKey) ?? null
+      : null
+  ), [displayedQueueItems, openQueueMenuKey]);
   const canPlayPrevious = currentTime > 3 || history.length > 0;
   const canPlayNext =
     isRepeatOneOn ||
@@ -369,6 +459,10 @@ export default function PlayerBridge() {
   const progressRangeStyle = {
     "--player-range-progress": progressPercent,
   } as CSSProperties;
+
+  useEffect(() => {
+    displayedQueueItemsRef.current = displayedQueueItems;
+  }, [displayedQueueItems]);
 
   const resetPlaybackProgress = useCallback(() => {
     setCurrentTime(0);
@@ -403,7 +497,67 @@ export default function PlayerBridge() {
 
   const closeQueueMenu = useCallback(() => {
     setOpenQueueMenuKey(null);
+    setQueueMenuPosition(null);
   }, []);
+
+  const setQueueItemElement = useCallback((key: string, node: HTMLDivElement | null) => {
+    if (node) {
+      queueItemRefs.current.set(key, node);
+      return;
+    }
+
+    queueItemRefs.current.delete(key);
+  }, []);
+
+  const captureQueueItemRects = useCallback(() => {
+    const nextRects = new Map<string, DOMRect>();
+
+    queueItemRefs.current.forEach((node, key) => {
+      nextRects.set(key, node.getBoundingClientRect());
+    });
+
+    queueItemRectsBeforeReorderRef.current = nextRects;
+  }, []);
+
+  useLayoutEffect(() => {
+    const previousRects = queueItemRectsBeforeReorderRef.current;
+
+    if (!previousRects) {
+      return;
+    }
+
+    queueItemRectsBeforeReorderRef.current = null;
+
+    queueItemRefs.current.forEach((node, key) => {
+      if (key === queueDragState?.key) {
+        return;
+      }
+
+      const previousRect = previousRects.get(key);
+
+      if (!previousRect) {
+        return;
+      }
+
+      const nextRect = node.getBoundingClientRect();
+      const deltaY = previousRect.top - nextRect.top;
+
+      if (Math.abs(deltaY) < 1) {
+        return;
+      }
+
+      node.animate(
+        [
+          { transform: `translateY(${deltaY}px)` },
+          { transform: "translateY(0)" },
+        ],
+        {
+          duration: 180,
+          easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
+        }
+      );
+    });
+  }, [displayedQueueItems, queueDragState?.key]);
 
   const startTrack = useCallback((nextTrack: PlayerTrack, skippedTracks: PlayerTrack[] = []) => {
     setHistory((currentHistory) => [
@@ -423,7 +577,7 @@ export default function PlayerBridge() {
       return;
     }
 
-    setContextQueue((currentContextQueue) => shuffleTracks(currentContextQueue));
+    setContextQueue((currentContextQueue) => shuffleItems(currentContextQueue));
     setIsShuffleOn(true);
     closeQueueMenu();
   }, [closeQueueMenu, isShuffleOn]);
@@ -442,26 +596,29 @@ export default function PlayerBridge() {
     }
 
     if (item.source === "manual") {
-      const selectedTrack = manualQueue[item.index];
+      const selectedEntry = manualQueue[item.index];
 
-      if (!selectedTrack) {
+      if (!selectedEntry) {
         return;
       }
 
-      startTrack(selectedTrack, manualQueue.slice(0, item.index));
+      startTrack(
+        selectedEntry.track,
+        manualQueue.slice(0, item.index).map((queuedEntry) => queuedEntry.track)
+      );
       setManualQueue(manualQueue.slice(item.index + 1));
       return;
     }
 
-    const selectedTrack = contextQueue[item.index];
+    const selectedEntry = contextQueue[item.index];
 
-    if (!selectedTrack) {
+    if (!selectedEntry) {
       return;
     }
 
-    startTrack(selectedTrack, [
-      ...manualQueue,
-      ...contextQueue.slice(0, item.index),
+    startTrack(selectedEntry.track, [
+      ...manualQueue.map((queuedEntry) => queuedEntry.track),
+      ...contextQueue.slice(0, item.index).map((queuedEntry) => queuedEntry.track),
     ]);
     setManualQueue([]);
     setContextQueue(contextQueue.slice(item.index + 1));
@@ -482,7 +639,7 @@ export default function PlayerBridge() {
 
       setCurrentTrack(nextTrack);
       setManualQueue([]);
-      setContextQueue(isShuffleOn ? shuffleTracks(nextContextQueue) : nextContextQueue);
+      setContextQueue(createQueueEntries(isShuffleOn ? shuffleTracks(nextContextQueue) : nextContextQueue));
       setContextCycle(sourceTracks);
       setHistory([]);
       resetPlaybackProgress();
@@ -492,7 +649,7 @@ export default function PlayerBridge() {
 
     window.addEventListener(PLAY_EVENT, handlePlay as EventListener);
     return () => window.removeEventListener(PLAY_EVENT, handlePlay as EventListener);
-  }, [closeQueueMenu, isShuffleOn, resetPlaybackProgress]);
+  }, [closeQueueMenu, createQueueEntries, isShuffleOn, resetPlaybackProgress]);
 
   useEffect(() => {
     function handleAppend(event: Event) {
@@ -505,7 +662,7 @@ export default function PlayerBridge() {
 
       if (!currentTrack) {
         setCurrentTrack(incomingTracks[0]);
-        setManualQueue(incomingTracks.slice(1));
+        setManualQueue(createQueueEntries(incomingTracks.slice(1)));
         setContextQueue([]);
         setContextCycle([]);
         setHistory([]);
@@ -515,12 +672,15 @@ export default function PlayerBridge() {
         return;
       }
 
-      setManualQueue((currentManualQueue) => [...currentManualQueue, ...incomingTracks]);
+      setManualQueue((currentManualQueue) => [
+        ...currentManualQueue,
+        ...createQueueEntries(incomingTracks),
+      ]);
     }
 
     window.addEventListener(APPEND_EVENT, handleAppend as EventListener);
     return () => window.removeEventListener(APPEND_EVENT, handleAppend as EventListener);
-  }, [closeQueueMenu, currentTrack, resetPlaybackProgress]);
+  }, [closeQueueMenu, createQueueEntries, currentTrack, resetPlaybackProgress]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -651,18 +811,18 @@ export default function PlayerBridge() {
       return true;
     }
 
-    const nextManualTrack = manualQueue[0];
+    const nextManualEntry = manualQueue[0];
 
-    if (nextManualTrack) {
-      startTrack(nextManualTrack);
+    if (nextManualEntry) {
+      startTrack(nextManualEntry.track);
       setManualQueue((currentManualQueue) => currentManualQueue.slice(1));
       return true;
     }
 
-    const nextContextTrack = contextQueue[0];
+    const nextContextEntry = contextQueue[0];
 
-    if (nextContextTrack) {
-      startTrack(nextContextTrack);
+    if (nextContextEntry) {
+      startTrack(nextContextEntry.track);
       setContextQueue((currentContextQueue) => currentContextQueue.slice(1));
       return true;
     }
@@ -676,7 +836,7 @@ export default function PlayerBridge() {
       }
 
       startTrack(nextTrack);
-      setContextQueue(nextCycle.slice(1));
+      setContextQueue(createQueueEntries(nextCycle.slice(1)));
       return true;
     }
 
@@ -688,6 +848,7 @@ export default function PlayerBridge() {
     isRepeatOneOn,
     isShuffleOn,
     manualQueue,
+    createQueueEntries,
     requestAudioPlay,
     startTrack,
     track,
@@ -798,29 +959,279 @@ export default function PlayerBridge() {
     closeQueueMenu();
   }
 
-  const moveQueuedItem = useCallback((item: QueueDisplayItem, direction: -1 | 1) => {
-    if (isRepeatOneOn || item.source === "current") {
+  const clearQueueLongPressTimer = useCallback(() => {
+    if (queueLongPressTimerRef.current !== null) {
+      window.clearTimeout(queueLongPressTimerRef.current);
+      queueLongPressTimerRef.current = null;
+    }
+  }, []);
+
+  const stopQueueAutoScroll = useCallback(() => {
+    if (queueAutoScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(queueAutoScrollFrameRef.current);
+      queueAutoScrollFrameRef.current = null;
+    }
+  }, []);
+
+  const reorderQueue = useCallback((fromItem: QueueDragTarget, toItem: QueueDragTarget) => {
+    if (
+      fromItem.source !== toItem.source ||
+      fromItem.index === toItem.index
+    ) {
       return;
     }
 
-    closeQueueMenu();
+    captureQueueItemRects();
 
-    const moveItems = (items: PlayerTrack[]) => {
-      const targetIndex = item.index + direction;
-
-      if (item.index < 0 || targetIndex < 0 || item.index >= items.length || targetIndex >= items.length) {
+    const reorderItems = (items: QueueEntry[]) => {
+      if (
+        fromItem.index < 0 ||
+        toItem.index < 0 ||
+        fromItem.index >= items.length ||
+        toItem.index >= items.length
+      ) {
         return items;
       }
 
-      return moveQueueItem(items, item.index, targetIndex);
+      return moveQueueItem(items, fromItem.index, toItem.index);
     };
 
-    if (item.source === "manual") {
-      setManualQueue(moveItems);
+    if (fromItem.source === "manual") {
+      setManualQueue(reorderItems);
     } else {
-      setContextQueue(moveItems);
+      setContextQueue(reorderItems);
     }
-  }, [closeQueueMenu, isRepeatOneOn]);
+  }, [captureQueueItemRects]);
+
+  const updateQueueDragPosition = useCallback((clientY: number) => {
+    const currentDrag = queueDragRef.current;
+
+    if (!currentDrag) {
+      return;
+    }
+
+    const nextDrag = {
+      ...currentDrag,
+      currentY: clientY,
+    };
+    const draggedCenterY = clientY - currentDrag.offsetY + currentDrag.rowHeight / 2;
+    const sourceItems = displayedQueueItemsRef.current.filter((item) => item.source === currentDrag.source);
+    let closestIndex = currentDrag.index;
+    let closestDistance = Number.POSITIVE_INFINITY;
+
+    sourceItems.forEach((item) => {
+      const node = queueItemRefs.current.get(item.key);
+
+      if (!node) {
+        return;
+      }
+
+      const rect = node.getBoundingClientRect();
+      const itemCenterY = rect.top + rect.height / 2;
+      const distance = Math.abs(draggedCenterY - itemCenterY);
+
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = item.index;
+      }
+    });
+
+    if (closestIndex !== currentDrag.index) {
+      reorderQueue(
+        { source: currentDrag.source, index: currentDrag.index },
+        { source: currentDrag.source, index: closestIndex }
+      );
+      nextDrag.index = closestIndex;
+    }
+
+    queueDragRef.current = nextDrag;
+    setQueueDragState(nextDrag);
+  }, [reorderQueue]);
+
+  const runQueueAutoScroll = useCallback(function runQueueAutoScrollFrame() {
+    const drag = queueDragRef.current;
+    const scrollElement = queueScrollRef.current;
+
+    if (!drag || !scrollElement) {
+      queueAutoScrollFrameRef.current = null;
+      return;
+    }
+
+    const bounds = scrollElement.getBoundingClientRect();
+    const edgeSize = 72;
+    const maxStep = 18;
+    let scrollStep = 0;
+
+    if (drag.currentY < bounds.top + edgeSize) {
+      const distance = Math.max(0, bounds.top + edgeSize - drag.currentY);
+      scrollStep = -Math.ceil((distance / edgeSize) * maxStep);
+    } else if (drag.currentY > bounds.bottom - edgeSize) {
+      const distance = Math.max(0, drag.currentY - (bounds.bottom - edgeSize));
+      scrollStep = Math.ceil((distance / edgeSize) * maxStep);
+    }
+
+    if (scrollStep !== 0) {
+      scrollElement.scrollTop += scrollStep;
+      updateQueueDragPosition(drag.currentY);
+    }
+
+    queueAutoScrollFrameRef.current = window.requestAnimationFrame(runQueueAutoScrollFrame);
+  }, [updateQueueDragPosition]);
+
+  const startQueueAutoScroll = useCallback(() => {
+    if (queueAutoScrollFrameRef.current !== null) {
+      return;
+    }
+
+    queueAutoScrollFrameRef.current = window.requestAnimationFrame(runQueueAutoScroll);
+  }, [runQueueAutoScroll]);
+
+  const finishQueueDrag = useCallback(() => {
+    const activeDrag = queueDragRef.current;
+
+    clearQueueLongPressTimer();
+    stopQueueAutoScroll();
+    queuePressRef.current = null;
+    queueDragRef.current = null;
+
+    if (queueDragTargetRef.current && activeDrag) {
+      try {
+        if (queueDragTargetRef.current.hasPointerCapture(activeDrag.pointerId)) {
+          queueDragTargetRef.current.releasePointerCapture(activeDrag.pointerId);
+        }
+      } catch {
+        // The browser can release capture before pointerup on interrupted gestures.
+      }
+    }
+
+    queueDragTargetRef.current = null;
+    setQueueDragState(null);
+
+    if (bodyUserSelectBeforeDragRef.current !== null) {
+      document.body.style.userSelect = bodyUserSelectBeforeDragRef.current;
+      bodyUserSelectBeforeDragRef.current = null;
+    }
+
+    suppressQueueClickRef.current = true;
+    window.setTimeout(() => {
+      suppressQueueClickRef.current = false;
+    }, 250);
+  }, [clearQueueLongPressTimer, stopQueueAutoScroll]);
+
+  const beginQueueLongPress = useCallback((item: QueueDisplayItem, event: PointerEvent<HTMLDivElement>) => {
+    if (isRepeatOneOn || item.source === "current" || event.button !== 0) {
+      return;
+    }
+
+    const target = event.target;
+
+    if (target instanceof Element && target.closest("[data-queue-action]")) {
+      return;
+    }
+
+    clearQueueLongPressTimer();
+    closeQueueMenu();
+
+    const pressState: QueuePressState = {
+      item,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      currentY: event.clientY,
+      target: event.currentTarget,
+    };
+
+    queuePressRef.current = pressState;
+    queueLongPressTimerRef.current = window.setTimeout(() => {
+      const queuedPress = queuePressRef.current;
+
+      if (!queuedPress || queuedPress.pointerId !== pressState.pointerId) {
+        return;
+      }
+
+      const row = queueItemRefs.current.get(item.key);
+
+      if (!row || (item.source !== "manual" && item.source !== "context")) {
+        return;
+      }
+
+      const rowBounds = row.getBoundingClientRect();
+      const nextDrag: QueueDragState = {
+        key: item.key,
+        source: item.source,
+        index: item.index,
+        pointerId: event.pointerId,
+        rowLeft: rowBounds.left,
+        rowWidth: rowBounds.width,
+        rowHeight: rowBounds.height,
+        offsetY: queuedPress.startY - rowBounds.top,
+        currentY: queuedPress.currentY,
+        track: item.track,
+      };
+
+      queueDragRef.current = nextDrag;
+      queueDragTargetRef.current = queuedPress.target;
+      setQueueDragState(nextDrag);
+      bodyUserSelectBeforeDragRef.current = document.body.style.userSelect;
+      document.body.style.userSelect = "none";
+
+      try {
+        queuedPress.target.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture can fail if the OS cancels the long press.
+      }
+
+      (navigator as Navigator & { vibrate?: (pattern: number) => boolean }).vibrate?.(8);
+
+      startQueueAutoScroll();
+    }, 240);
+  }, [clearQueueLongPressTimer, closeQueueMenu, isRepeatOneOn, startQueueAutoScroll]);
+
+  const moveQueueLongPress = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const pressState = queuePressRef.current;
+
+    if (!pressState || pressState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    pressState.currentY = event.clientY;
+
+    if (!queueDragRef.current) {
+      const deltaX = Math.abs(event.clientX - pressState.startX);
+      const deltaY = Math.abs(event.clientY - pressState.startY);
+
+      if (deltaX > 8 || deltaY > 8) {
+        clearQueueLongPressTimer();
+        queuePressRef.current = null;
+      }
+
+      return;
+    }
+
+    event.preventDefault();
+    updateQueueDragPosition(event.clientY);
+  }, [clearQueueLongPressTimer, updateQueueDragPosition]);
+
+  const endQueueLongPress = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const drag = queueDragRef.current;
+    const pressState = queuePressRef.current;
+
+    if (drag && drag.pointerId === event.pointerId) {
+      event.preventDefault();
+      finishQueueDrag();
+      return;
+    }
+
+    if (pressState?.pointerId === event.pointerId) {
+      clearQueueLongPressTimer();
+      queuePressRef.current = null;
+    }
+  }, [clearQueueLongPressTimer, finishQueueDrag]);
+
+  useEffect(() => () => {
+    clearQueueLongPressTimer();
+    stopQueueAutoScroll();
+  }, [clearQueueLongPressTimer, stopQueueAutoScroll]);
 
   const removeQueuedItem = useCallback((item: QueueDisplayItem) => {
     closeQueueMenu();
@@ -843,13 +1254,57 @@ export default function PlayerBridge() {
     router.push(queuedTrack.sourceHref || "/library");
   }, [closeQueueMenu, router]);
 
-  const toggleQueueMenu = useCallback((key: string) => {
+  const toggleQueueMenu = useCallback((
+    item: QueueDisplayItem,
+    event: MouseEvent<HTMLButtonElement>
+  ) => {
+    event.stopPropagation();
+
+    const key = item.key;
+
     if (openQueueMenuKey === key) {
       closeQueueMenu();
       return;
     }
 
+    const triggerBounds = event.currentTarget.getBoundingClientRect();
+    const menuWidth = Math.min(280, window.innerWidth - 24);
+    const menuHeight = item.source === "current" ? 94 : 174;
+    const viewportGap = 12;
+    const triggerGap = 10;
+    const opensDown = triggerBounds.bottom + triggerGap + menuHeight <= window.innerHeight - viewportGap;
+    const top = opensDown
+      ? triggerBounds.bottom + triggerGap
+      : Math.max(viewportGap, triggerBounds.top - menuHeight - triggerGap);
+    const left = Math.min(
+      Math.max(viewportGap, triggerBounds.right - menuWidth),
+      window.innerWidth - menuWidth - viewportGap
+    );
+
     setOpenQueueMenuKey(key);
+    setQueueMenuPosition({ top, left });
+  }, [closeQueueMenu, openQueueMenuKey]);
+
+  useEffect(() => {
+    if (!openQueueMenuKey) {
+      return;
+    }
+
+    function handleOutsidePointerDown(event: globalThis.PointerEvent) {
+      const target = event.target;
+
+      if (
+        target instanceof Element &&
+        (target.closest("[data-queue-menu-root]") || target.closest("[data-queue-action]"))
+      ) {
+        return;
+      }
+
+      closeQueueMenu();
+    }
+
+    window.addEventListener("pointerdown", handleOutsidePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handleOutsidePointerDown, true);
   }, [closeQueueMenu, openQueueMenuKey]);
 
   const renderExpandedControls = (isCompact = false) => (
@@ -960,18 +1415,41 @@ export default function PlayerBridge() {
             closeQueueMenu();
           }
         }}
-        className={`${listClassName} scrollbar-none touch-pan-y select-none overflow-y-auto overscroll-contain p-2 pb-24`}
+        className={`${listClassName} queue-sort-surface scrollbar-none touch-pan-y select-none overflow-y-auto overscroll-contain p-2 pb-24`}
       >
-        {displayedQueueItems.map((item) => (
-          <div key={item.key} className="relative">
+        {displayedQueueItems.map((item) => {
+          const isDraggedItem = queueDragState?.key === item.key;
+
+          return (
             <div
-              className={`flex min-h-16 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition duration-200 ease-out ${
+              key={item.key}
+              ref={(node) => setQueueItemElement(item.key, node)}
+              data-queue-row
+              data-queue-source={item.source}
+              data-queue-index={item.index}
+              onContextMenu={(event) => {
+                if (item.source !== "current") {
+                  event.preventDefault();
+                }
+              }}
+              onPointerDown={(event) => beginQueueLongPress(item, event)}
+              onPointerMove={moveQueueLongPress}
+              onPointerUp={endQueueLongPress}
+              onPointerCancel={endQueueLongPress}
+              className={`relative flex min-h-16 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-[background-color,box-shadow,opacity,transform] duration-200 ease-out ${
                 item.source === "current" ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-[var(--app-muted)] hover:bg-white/[0.08]"
-              }`}
+              } ${isDraggedItem ? "opacity-0" : "opacity-100"}`}
             >
               <button
                 type="button"
-                onClick={() => selectQueuedItem(item)}
+                onClick={() => {
+                  if (suppressQueueClickRef.current) {
+                    suppressQueueClickRef.current = false;
+                    return;
+                  }
+
+                  selectQueuedItem(item);
+                }}
                 className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
               >
                 <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/[0.06] font-mono text-xs text-white shadow-[0_10px_30px_rgba(0,0,0,0.22)]">
@@ -992,38 +1470,13 @@ export default function PlayerBridge() {
                 <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-black">
                   Now
                 </span>
-              ) : (
-                <div className="flex h-11 w-20 shrink-0 overflow-hidden rounded-full border border-white/[0.08] bg-white/[0.04]">
-                  <button
-                    type="button"
-                    onClick={() => moveQueuedItem(item, -1)}
-                    disabled={item.index === 0}
-                    aria-label={`Move ${item.track.title} up`}
-                    title="Move up"
-                    className="flex flex-1 items-center justify-center text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:text-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-white/70"
-                  >
-                    <PlayerIcon name="chevronUp" className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moveQueuedItem(item, 1)}
-                    disabled={
-                      item.source === "manual"
-                        ? item.index >= manualQueue.length - 1
-                        : item.index >= contextQueue.length - 1
-                    }
-                    aria-label={`Move ${item.track.title} down`}
-                    title="Move down"
-                    className="flex flex-1 items-center justify-center text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:text-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-white/70"
-                  >
-                    <PlayerIcon name="chevronDown" className="h-4 w-4" />
-                  </button>
-                </div>
-              )}
+              ) : null}
 
               <button
                 type="button"
-                onClick={() => toggleQueueMenu(item.key)}
+                data-queue-action
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => toggleQueueMenu(item, event)}
                 className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
                 aria-label={`Open queue menu for ${item.track.title}`}
                 aria-expanded={openQueueMenuKey === item.key}
@@ -1034,30 +1487,67 @@ export default function PlayerBridge() {
                 <span className="h-1 w-1 rounded-full bg-current" />
               </button>
             </div>
-
-            {openQueueMenuKey === item.key ? (
-              <div className="mx-3 mb-2 mt-1 overflow-hidden rounded-2xl border border-white/[0.1] bg-white/[0.07] p-2 text-sm shadow-[0_14px_36px_rgba(0,0,0,0.34)] backdrop-blur-xl">
-                <button
-                  type="button"
-                  onClick={() => goToQueuedTrackProject(item.track)}
-                  className="flex min-h-11 w-full items-center rounded-xl px-3 py-2 text-left text-white transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
-                >
-                  Go to project
-                </button>
-                {item.source !== "current" ? (
-                  <button
-                    type="button"
-                    onClick={() => removeQueuedItem(item)}
-                    className="flex min-h-11 w-full items-center rounded-xl px-3 py-2 text-left text-red-300 transition hover:bg-red-500/[0.12] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200"
-                  >
-                    Remove from queue
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ))}
+          );
+        })}
       </div>
+      {queueDragState ? (
+        <div
+          className="pointer-events-none fixed z-[420] flex min-h-16 items-center gap-3 rounded-2xl bg-[rgba(54,54,54,0.96)] px-3 py-2.5 text-left text-white opacity-95 shadow-[0_26px_70px_rgba(0,0,0,0.58)] ring-1 ring-white/[0.12] backdrop-blur-xl"
+          style={{
+            left: queueDragState.rowLeft,
+            top: queueDragState.currentY - queueDragState.offsetY,
+            width: queueDragState.rowWidth,
+            transform: "scale(1.035)",
+          }}
+        >
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/[0.08] font-mono text-xs text-white shadow-[0_10px_30px_rgba(0,0,0,0.24)]">
+            {queueDragState.track.coverDataUrl ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img src={queueDragState.track.coverDataUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              queueDragState.index + 1
+            )}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-base font-semibold text-white">{queueDragState.track.title}</span>
+            <span className="block truncate text-xs text-[var(--app-muted)]">{queueDragState.track.artist}</span>
+          </span>
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-white/60">
+            <span className="h-1 w-1 rounded-full bg-current" />
+            <span className="h-1 w-1 rounded-full bg-current" />
+            <span className="h-1 w-1 rounded-full bg-current" />
+          </span>
+        </div>
+      ) : null}
+      {openQueueMenuItem && queueMenuPosition ? (
+        <div
+          data-queue-menu-root
+          className="fixed z-[430] w-[min(17.5rem,calc(100vw-1.5rem))] overflow-hidden rounded-[2rem] border border-white/[0.08] bg-[rgba(12,12,12,0.96)] p-3 text-lg font-semibold text-white shadow-[0_28px_70px_rgba(0,0,0,0.62)] backdrop-blur-2xl"
+          style={{
+            top: queueMenuPosition.top,
+            left: queueMenuPosition.left,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => goToQueuedTrackProject(openQueueMenuItem.track)}
+            className="flex min-h-16 w-full items-center gap-4 rounded-3xl px-4 text-left transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+          >
+            <PlayerIcon name="external" className="h-8 w-8 shrink-0" />
+            <span>Go to project</span>
+          </button>
+          {openQueueMenuItem.source !== "current" ? (
+            <button
+              type="button"
+              onClick={() => removeQueuedItem(openQueueMenuItem)}
+              className="mt-1 flex min-h-20 w-full items-center gap-4 rounded-3xl px-4 text-left text-red-400 transition hover:bg-red-500/[0.14] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200"
+            >
+              <PlayerIcon name="minusCircle" className="h-8 w-8 shrink-0" />
+              <span>Remove from queue</span>
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 
