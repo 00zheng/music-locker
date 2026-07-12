@@ -6,8 +6,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
 } from "react";
 
 type PlayerTrack = {
@@ -600,9 +598,9 @@ export default function PlayerBridge() {
     setMediaSessionAction("play", () => setIsPlaying(true));
     setMediaSessionAction("pause", () => setIsPlaying(false));
     setMediaSessionAction("previoustrack", playPrevious);
-    setMediaSessionAction("nexttrack", canPlayNext ? playNext : null);
-    setMediaSessionAction("seekbackward", () => seekTo((audioRef.current?.currentTime ?? currentTime) - 10));
-    setMediaSessionAction("seekforward", () => seekTo((audioRef.current?.currentTime ?? currentTime) + 10));
+    setMediaSessionAction("nexttrack", queue.length > 1 ? playNext : null);
+    setMediaSessionAction("seekbackward", null);
+    setMediaSessionAction("seekforward", null);
     setMediaSessionAction("seekto", (details) => {
       if (typeof details.seekTime === "number") {
         seekTo(details.seekTime);
@@ -614,7 +612,7 @@ export default function PlayerBridge() {
       mediaSession.metadata = null;
       MEDIA_SESSION_ACTIONS.forEach((action) => setMediaSessionAction(action, null));
     };
-  }, [canPlayNext, currentTime, playNext, playPrevious, seekTo, track]);
+  }, [playNext, playPrevious, queue.length, seekTo, track]);
 
   useEffect(() => {
     const mediaSession = getMediaSession();
@@ -648,53 +646,59 @@ export default function PlayerBridge() {
     }
   }, [currentTime, duration, isPlaying, track]);
 
-  function stopMiniPlayerOpen(event: ReactMouseEvent<HTMLElement>) {
-    event.stopPropagation();
-  }
-
-  function handleMiniPlayerClick(event: ReactMouseEvent<HTMLDivElement>) {
-    const target = event.target;
-
-    if (target instanceof HTMLElement && target.closest("[data-player-action]")) {
+  function openExpandedPlayer() {
+    if (window.matchMedia("(min-width: 640px)").matches) {
       return;
     }
 
     setIsExpandedPlayerOpen(true);
   }
 
-  function handleMiniPlayerKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    const target = event.target;
-
-    if (target instanceof HTMLElement && target.closest("[data-player-action]")) {
-      return;
-    }
-
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      setIsExpandedPlayerOpen(true);
-    }
+  function collapseExpandedPlayer() {
+    setIsExpandedPlayerOpen(false);
+    setIsQueueOpen(false);
   }
 
   const renderQueuePanel = (className: string, listClassName = "max-h-56") => (
-    <div className={className}>
-      <div className="flex items-center justify-between border-b border-white/[0.08] px-4 py-3">
-        <p className="text-sm font-semibold text-white">Queue</p>
-        <p className="text-xs text-[var(--app-muted)]">
-          {queueIndex + 1} / {queue.length}
-        </p>
+    <div className={className} aria-label="Playback queue">
+      <div className="flex items-center justify-between border-b border-white/[0.08] px-4 py-4">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-white">Up next</p>
+          <p className="mt-0.5 text-xs text-[var(--app-muted)]">
+            {queue.length} track{queue.length === 1 ? "" : "s"} in queue
+          </p>
+        </div>
+        <span className="rounded-full border border-white/[0.1] bg-white/[0.06] px-2.5 py-1 font-mono text-xs text-white">
+          {queueIndex + 1}/{queue.length}
+        </span>
       </div>
-      <div className={`${listClassName} overflow-y-auto py-1`}>
+      <div className={`${listClassName} overflow-y-auto p-2`}>
         {queue.map((queuedTrack, index) => (
           <button
             key={`${queuedTrack.id}-${index}`}
             type="button"
             onClick={() => selectQueuedTrack(index)}
-            className={`block min-h-11 w-full px-4 py-2 text-left text-sm transition hover:bg-white/[0.08] ${
-              index === queueIndex ? "bg-white/[0.1] text-white" : "text-[var(--app-muted)]"
+            className={`flex min-h-14 w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition hover:bg-white/[0.08] ${
+              index === queueIndex ? "bg-white/[0.1] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-[var(--app-muted)]"
             }`}
           >
-            <span className="mr-3 font-mono text-xs">{index + 1}</span>
-            <span>{queuedTrack.title}</span>
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white/[0.06] font-mono text-xs text-white">
+              {queuedTrack.coverDataUrl ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={queuedTrack.coverDataUrl} alt="" className="h-full w-full object-cover" />
+              ) : (
+                index + 1
+              )}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-white">{queuedTrack.title}</span>
+              <span className="block truncate text-xs text-[var(--app-muted)]">{queuedTrack.artist}</span>
+            </span>
+            {index === queueIndex ? (
+              <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-black">
+                Now
+              </span>
+            ) : null}
           </button>
         ))}
       </div>
@@ -739,7 +743,7 @@ export default function PlayerBridge() {
                   <div className="h-1.5 w-12 rounded-full bg-white/20" aria-hidden="true" />
                   <button
                     type="button"
-                    onClick={() => setIsExpandedPlayerOpen(false)}
+                    onClick={collapseExpandedPlayer}
                     className="flex h-12 w-12 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
                     aria-label="Collapse player"
                     title="Collapse"
@@ -788,8 +792,8 @@ export default function PlayerBridge() {
 
                   {isQueueOpen
                     ? renderQueuePanel(
-                        "max-h-52 overflow-hidden rounded-2xl border border-white/[0.08] bg-[rgba(27,27,27,0.72)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl",
-                        "max-h-36"
+                        "max-h-[15.5rem] overflow-hidden rounded-3xl border border-white/[0.08] bg-[rgba(27,27,27,0.74)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl",
+                        "max-h-[10rem]"
                       )
                     : null}
 
@@ -859,20 +863,24 @@ export default function PlayerBridge() {
 
           <div className="fixed inset-x-0 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-50 px-3 sm:bottom-5 sm:px-4">
             {isQueueOpen && !isExpandedPlayerOpen
-              ? renderQueuePanel(
-                  "mx-auto mb-3 max-h-72 max-w-4xl overflow-hidden rounded-2xl border border-white/[0.08] bg-[rgba(27,27,27,0.72)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl"
-                )
+              ? (
+                <div className="hidden sm:block">
+                  {renderQueuePanel(
+                    "mx-auto mb-3 max-h-80 max-w-4xl overflow-hidden rounded-3xl border border-white/[0.08] bg-[rgba(27,27,27,0.74)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+                  )}
+                </div>
+              )
               : null}
 
             <div
-              role="button"
-              tabIndex={0}
-              onClick={handleMiniPlayerClick}
-              onKeyDown={handleMiniPlayerKeyDown}
-              aria-label={`Open player for ${track.title}`}
-              className="mx-auto flex max-w-5xl cursor-pointer flex-wrap items-center gap-2 rounded-2xl border border-white/[0.08] bg-[rgba(36,36,36,0.78)] px-2 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl transition active:scale-[0.995] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 sm:cursor-default sm:flex-nowrap sm:gap-3 sm:rounded-full sm:px-3"
+              className="mx-auto flex max-w-5xl flex-wrap items-center gap-2 rounded-2xl border border-white/[0.08] bg-[rgba(36,36,36,0.78)] px-2 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:flex-nowrap sm:gap-3 sm:rounded-full sm:px-3"
             >
-              <div className="flex min-w-0 flex-1 items-center gap-2 pr-1 sm:gap-3">
+              <button
+                type="button"
+                onClick={openExpandedPlayer}
+                aria-label={`Open player for ${track.title}`}
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-xl pr-1 text-left transition active:scale-[0.995] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 sm:cursor-default sm:gap-3 sm:rounded-full"
+              >
                 {track.coverDataUrl ? (
                   /* eslint-disable-next-line @next/next/no-img-element */
                   <img
@@ -887,7 +895,7 @@ export default function PlayerBridge() {
                   <p className="truncate text-sm font-medium text-[var(--app-text)]">{track.title}</p>
                   <p className="truncate text-xs text-[var(--app-muted)]">{track.artist}</p>
                 </div>
-              </div>
+              </button>
 
               <input
                 data-player-action
@@ -911,11 +919,7 @@ export default function PlayerBridge() {
                 <span>{formatTime(duration)}</span>
               </div>
 
-              <div
-                data-player-action
-                onClick={stopMiniPlayerOpen}
-                className="flex shrink-0 items-center gap-1.5 sm:gap-1"
-              >
+              <div className="flex shrink-0 items-center gap-1.5 sm:gap-1">
                 <button
                   type="button"
                   onClick={playPrevious}
