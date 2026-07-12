@@ -21,9 +21,17 @@ type PlayerRequest = {
   startIndex: number;
 };
 
+type PlaybackMode = "normal" | "shuffle" | "repeat-all" | "repeat-one";
+
 const PLAY_EVENT = "music-locker:play-track";
 const APPEND_EVENT = "music-locker:append-track-queue";
 export const CURRENT_TRACK_EVENT = "music-locker:current-track";
+const PLAYBACK_MODE_SEQUENCE: PlaybackMode[] = [
+  "normal",
+  "shuffle",
+  "repeat-all",
+  "repeat-one",
+];
 const APP_ICON_ARTWORK = [
   { src: "/icon-192x192.png", sizes: "192x192", type: "image/png" },
   { src: "/icon-512x512.png", sizes: "512x512", type: "image/png" },
@@ -110,6 +118,39 @@ function buildShuffleOrder(length: number, startIndex: number) {
   return [safeStartIndex, ...shuffleIndexes(rest)];
 }
 
+function nextPlaybackMode(mode: PlaybackMode): PlaybackMode {
+  const currentIndex = PLAYBACK_MODE_SEQUENCE.indexOf(mode);
+  return PLAYBACK_MODE_SEQUENCE[(currentIndex + 1) % PLAYBACK_MODE_SEQUENCE.length];
+}
+
+function playbackModeTitle(mode: PlaybackMode): string {
+  if (mode === "shuffle") {
+    return "Shuffle";
+  }
+
+  if (mode === "repeat-all") {
+    return "Loop queue";
+  }
+
+  if (mode === "repeat-one") {
+    return "Loop current song";
+  }
+
+  return "Playback mode";
+}
+
+function playbackModeIcon(mode: PlaybackMode): "shuffle" | "repeat" | "repeatOne" {
+  if (mode === "repeat-all") {
+    return "repeat";
+  }
+
+  if (mode === "repeat-one") {
+    return "repeatOne";
+  }
+
+  return "shuffle";
+}
+
 function PlayerIcon({
   name,
   className = "h-4 w-4",
@@ -121,6 +162,8 @@ function PlayerIcon({
     | "next"
     | "queue"
     | "shuffle"
+    | "repeat"
+    | "repeatOne"
     | "volume"
     | "chevronDown";
   className?: string;
@@ -159,6 +202,33 @@ function PlayerIcon({
         <path d="M21 16v5h-5" />
         <path d="M15 15l6 6" />
         <path d="M4 4l5 5" />
+      </>
+    ),
+    repeat: (
+      <>
+        <path d="m17 2 4 4-4 4" />
+        <path d="M3 11V9a3 3 0 0 1 3-3h15" />
+        <path d="m7 22-4-4 4-4" />
+        <path d="M21 13v2a3 3 0 0 1-3 3H3" />
+      </>
+    ),
+    repeatOne: (
+      <>
+        <path d="m17 2 4 4-4 4" />
+        <path d="M3 11V9a3 3 0 0 1 3-3h15" />
+        <path d="m7 22-4-4 4-4" />
+        <path d="M21 13v2a3 3 0 0 1-3 3H3" />
+        <text
+          x="12"
+          y="15"
+          fill="currentColor"
+          fontSize="8"
+          fontWeight="700"
+          stroke="none"
+          textAnchor="middle"
+        >
+          1
+        </text>
       </>
     ),
     volume: (
@@ -258,13 +328,16 @@ export default function PlayerBridge() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [isExpandedPlayerOpen, setIsExpandedPlayerOpen] = useState(false);
-  const [isShuffleOn, setIsShuffleOn] = useState(false);
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("normal");
   const [shuffleOrder, setShuffleOrder] = useState<number[]>([]);
   const [shuffleCursor, setShuffleCursor] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.9);
   const track = queue[queueIndex] || null;
+  const isShuffleOn = playbackMode === "shuffle";
+  const isRepeatAllOn = playbackMode === "repeat-all";
+  const isRepeatOneOn = playbackMode === "repeat-one";
   const shufflePosition = isShuffleOn
     ? shuffleOrder[shuffleCursor] === queueIndex
       ? shuffleCursor
@@ -273,9 +346,9 @@ export default function PlayerBridge() {
   const hasPreviousTrack = isShuffleOn ? shufflePosition > 0 : queueIndex > 0;
   const hasNextTrack = isShuffleOn
     ? shufflePosition >= 0 && shufflePosition < shuffleOrder.length - 1
-    : queueIndex < queue.length - 1;
-  const canPlayPrevious = currentTime > 3 || hasPreviousTrack;
-  const canPlayNext = hasNextTrack;
+    : queueIndex < queue.length - 1 || (isRepeatAllOn && queue.length > 1);
+  const canPlayPrevious = currentTime > 3 || hasPreviousTrack || (isRepeatAllOn && queue.length > 1);
+  const canPlayNext = hasNextTrack || (isRepeatOneOn && queue.length > 1);
   const scrubMax = duration > 0 ? duration : Math.max(currentTime, 0);
   const scrubValue = Math.min(currentTime, scrubMax);
   const progressPercent =
@@ -318,21 +391,21 @@ export default function PlayerBridge() {
     setIsPlaying(true);
   }, [queue.length, resetPlaybackProgress]);
 
-  const toggleShuffle = useCallback(() => {
-    if (isShuffleOn) {
-      setIsShuffleOn(false);
-      setShuffleOrder([]);
-      setShuffleCursor(0);
-      return;
-    }
+  const cyclePlaybackMode = useCallback(() => {
+    const nextMode = nextPlaybackMode(playbackMode);
 
-    setIsShuffleOn(true);
-
-    if (queue.length > 0) {
+    if (nextMode === "shuffle" && queue.length > 0) {
       setShuffleOrder(buildShuffleOrder(queue.length, queueIndex));
       setShuffleCursor(0);
     }
-  }, [isShuffleOn, queue.length, queueIndex]);
+
+    if (playbackMode === "shuffle" && nextMode !== "shuffle") {
+      setShuffleOrder([]);
+      setShuffleCursor(0);
+    }
+
+    setPlaybackMode(nextMode);
+  }, [playbackMode, queue.length, queueIndex]);
 
   const selectQueuedTrack = useCallback((index: number) => {
     const safeIndex = Math.min(Math.max(index, 0), Math.max(queue.length - 1, 0));
@@ -358,7 +431,7 @@ export default function PlayerBridge() {
       setQueueIndex(startIndex);
       resetPlaybackProgress();
 
-      if (isShuffleOn) {
+      if (playbackMode === "shuffle") {
         setShuffleOrder(buildShuffleOrder(nextQueue.length, startIndex));
         setShuffleCursor(0);
       } else {
@@ -371,7 +444,7 @@ export default function PlayerBridge() {
 
     window.addEventListener(PLAY_EVENT, handlePlay as EventListener);
     return () => window.removeEventListener(PLAY_EVENT, handlePlay as EventListener);
-  }, [isShuffleOn, resetPlaybackProgress]);
+  }, [playbackMode, resetPlaybackProgress]);
 
   useEffect(() => {
     function handleAppend(event: Event) {
@@ -386,11 +459,11 @@ export default function PlayerBridge() {
           resetPlaybackProgress();
           setIsPlaying(true);
 
-          if (isShuffleOn) {
+          if (playbackMode === "shuffle") {
             setShuffleOrder(buildShuffleOrder(nextQueue.length, 0));
             setShuffleCursor(0);
           }
-        } else if (isShuffleOn) {
+        } else if (playbackMode === "shuffle") {
           const appendedIndexes = incomingTracks.map((_, index) => currentQueue.length + index);
           setShuffleOrder((currentOrder) => [...currentOrder, ...shuffleIndexes(appendedIndexes)]);
         }
@@ -401,7 +474,7 @@ export default function PlayerBridge() {
 
     window.addEventListener(APPEND_EVENT, handleAppend as EventListener);
     return () => window.removeEventListener(APPEND_EVENT, handleAppend as EventListener);
-  }, [isShuffleOn, resetPlaybackProgress]);
+  }, [playbackMode, resetPlaybackProgress]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -521,11 +594,15 @@ export default function PlayerBridge() {
     }
 
     if (queueIndex <= 0) {
+      if (isRepeatAllOn && queue.length > 1) {
+        startTrackAt(queue.length - 1);
+      }
+
       return;
     }
 
     startTrackAt(queueIndex - 1);
-  }, [isShuffleOn, queueIndex, shuffleCursor, shuffleOrder, startTrackAt]);
+  }, [isRepeatAllOn, isShuffleOn, queue.length, queueIndex, shuffleCursor, shuffleOrder, startTrackAt]);
 
   const moveToNextTrack = useCallback(() => {
     if (queue.length === 0) {
@@ -548,25 +625,42 @@ export default function PlayerBridge() {
     }
 
     if (queueIndex >= queue.length - 1) {
+      if (isRepeatAllOn && queue.length > 1) {
+        startTrackAt(0);
+        return true;
+      }
+
       return false;
     }
 
     startTrackAt(queueIndex + 1);
     return true;
-  }, [isShuffleOn, queue.length, queueIndex, shuffleCursor, shuffleOrder, startTrackAt]);
+  }, [isRepeatAllOn, isShuffleOn, queue.length, queueIndex, shuffleCursor, shuffleOrder, startTrackAt]);
 
   const playNext = useCallback(() => {
     moveToNextTrack();
   }, [moveToNextTrack]);
 
   const handleEnded = useCallback(() => {
+    if (isRepeatOneOn) {
+      const audio = audioRef.current;
+
+      if (audio) {
+        audio.currentTime = 0;
+        setCurrentTime(0);
+        setIsPlaying(true);
+        void audio.play().catch(() => setIsPlaying(false));
+        return;
+      }
+    }
+
     if (moveToNextTrack()) {
       return;
     }
 
     setIsPlaying(false);
     dispatchCurrentTrack(null);
-  }, [moveToNextTrack]);
+  }, [isRepeatOneOn, moveToNextTrack]);
 
   useEffect(() => {
     const mediaSession = getMediaSession();
@@ -659,11 +753,79 @@ export default function PlayerBridge() {
     setIsQueueOpen(false);
   }
 
+  const renderExpandedControls = (isCompact = false) => (
+    <div className="flex items-center justify-between">
+      <button
+        type="button"
+        onClick={cyclePlaybackMode}
+        aria-label={playbackModeTitle(playbackMode)}
+        aria-pressed={playbackMode !== "normal"}
+        title={playbackModeTitle(playbackMode)}
+        className={`flex items-center justify-center rounded-full transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+          isCompact ? "h-11 w-11" : "h-12 w-12"
+        } ${playbackMode !== "normal" ? "bg-white text-black" : "text-[var(--app-muted)]"}`}
+      >
+        <PlayerIcon name={playbackModeIcon(playbackMode)} className={isCompact ? "h-4 w-4" : "h-5 w-5"} />
+      </button>
+
+      <button
+        type="button"
+        onClick={playPrevious}
+        disabled={!canPlayPrevious}
+        aria-label="Back"
+        title="Back"
+        className={`flex items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+          isCompact ? "h-12 w-12" : "h-14 w-14"
+        }`}
+      >
+        <PlayerIcon name="previous" className={isCompact ? "h-6 w-6" : "h-7 w-7"} />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => setIsPlaying((current) => !current)}
+        aria-label={isPlaying ? "Pause" : "Play"}
+        title={isPlaying ? "Pause" : "Play"}
+        className={`flex items-center justify-center rounded-full bg-white text-black shadow-[0_18px_50px_rgba(0,0,0,0.35)] transition active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+          isCompact ? "h-16 w-16" : "h-20 w-20"
+        }`}
+      >
+        <PlayerIcon name={isPlaying ? "pause" : "play"} className={isCompact ? "h-7 w-7" : "h-8 w-8"} />
+      </button>
+
+      <button
+        type="button"
+        onClick={playNext}
+        disabled={!canPlayNext}
+        aria-label="Skip"
+        title="Skip"
+        className={`flex items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+          isCompact ? "h-12 w-12" : "h-14 w-14"
+        }`}
+      >
+        <PlayerIcon name="next" className={isCompact ? "h-6 w-6" : "h-7 w-7"} />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => setIsQueueOpen((current) => !current)}
+        aria-label="Queue"
+        aria-pressed={isQueueOpen}
+        title="Queue"
+        className={`flex items-center justify-center rounded-full transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+          isCompact ? "h-11 w-11" : "h-12 w-12"
+        } ${isQueueOpen ? "bg-white text-black" : "text-[var(--app-muted)]"}`}
+      >
+        <PlayerIcon name="queue" className={isCompact ? "h-4 w-4" : "h-5 w-5"} />
+      </button>
+    </div>
+  );
+
   const renderQueuePanel = (className: string, listClassName = "max-h-56") => (
     <div className={className} aria-label="Playback queue">
-      <div className="flex items-center justify-between border-b border-white/[0.08] px-4 py-4">
+      <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-white">Up next</p>
+          <p className="text-xl font-semibold text-white">Queue</p>
           <p className="mt-0.5 text-xs text-[var(--app-muted)]">
             {queue.length} track{queue.length === 1 ? "" : "s"} in queue
           </p>
@@ -678,11 +840,11 @@ export default function PlayerBridge() {
             key={`${queuedTrack.id}-${index}`}
             type="button"
             onClick={() => selectQueuedTrack(index)}
-            className={`flex min-h-14 w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition hover:bg-white/[0.08] ${
-              index === queueIndex ? "bg-white/[0.1] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-[var(--app-muted)]"
+            className={`flex min-h-16 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition hover:bg-white/[0.08] ${
+              index === queueIndex ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-[var(--app-muted)]"
             }`}
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white/[0.06] font-mono text-xs text-white">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/[0.06] font-mono text-xs text-white shadow-[0_10px_30px_rgba(0,0,0,0.22)]">
               {queuedTrack.coverDataUrl ? (
                 /* eslint-disable-next-line @next/next/no-img-element */
                 <img src={queuedTrack.coverDataUrl} alt="" className="h-full w-full object-cover" />
@@ -691,14 +853,20 @@ export default function PlayerBridge() {
               )}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-white">{queuedTrack.title}</span>
+              <span className="block truncate text-base font-semibold text-white">{queuedTrack.title}</span>
               <span className="block truncate text-xs text-[var(--app-muted)]">{queuedTrack.artist}</span>
             </span>
             {index === queueIndex ? (
-              <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-black">
+              <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-black">
                 Now
               </span>
-            ) : null}
+            ) : (
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 text-[var(--app-muted)]" aria-hidden="true">
+                <span className="h-1 w-1 rounded-full bg-current" />
+                <span className="h-1 w-1 rounded-full bg-current" />
+                <span className="h-1 w-1 rounded-full bg-current" />
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -737,7 +905,7 @@ export default function PlayerBridge() {
       {track ? (
         <>
           {isExpandedPlayerOpen ? (
-            <div className="fixed inset-0 z-[60] bg-[rgba(8,8,8,0.94)] px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] text-white backdrop-blur-2xl sm:hidden">
+            <div className="fixed inset-0 z-[300] bg-[rgba(8,8,8,0.94)] px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] text-white backdrop-blur-2xl sm:hidden">
               <div className="mx-auto flex h-full max-w-md flex-col">
                 <div className="flex h-14 items-center justify-between">
                   <div className="h-1.5 w-12 rounded-full bg-white/20" aria-hidden="true" />
@@ -752,110 +920,100 @@ export default function PlayerBridge() {
                   </button>
                 </div>
 
-                <div className="flex min-h-0 flex-1 flex-col justify-center gap-6">
-                  <div className="mx-auto w-[78vw] max-w-[22rem]">
-                    {track.coverDataUrl ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img
-                        src={track.coverDataUrl}
-                        alt=""
-                        className="aspect-square w-full rounded-[28px] object-cover shadow-[0_28px_90px_rgba(0,0,0,0.5)]"
-                      />
-                    ) : (
-                      <div className="aspect-square w-full rounded-[28px] border border-[var(--app-border)] bg-[var(--app-glass)] shadow-[0_28px_90px_rgba(0,0,0,0.5)]" />
-                    )}
-                  </div>
+                <div className={`flex min-h-0 flex-1 flex-col ${
+                  isQueueOpen ? "gap-4 overflow-hidden pb-1" : "justify-center gap-6"
+                }`}>
+                  {isQueueOpen ? (
+                    <>
+                      <div className="rounded-[28px] border border-white/[0.08] bg-[rgba(32,32,32,0.78)] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.42)] backdrop-blur-xl">
+                        <div className="flex min-w-0 items-center gap-3">
+                          {track.coverDataUrl ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img
+                              src={track.coverDataUrl}
+                              alt=""
+                              className="h-16 w-16 shrink-0 rounded-2xl object-cover shadow-[0_14px_36px_rgba(0,0,0,0.32)]"
+                            />
+                          ) : (
+                            <div className="h-16 w-16 shrink-0 rounded-2xl border border-[var(--app-border)] bg-[var(--app-glass)]" />
+                          )}
+                          <div className="min-w-0">
+                            <p className="truncate text-xl font-semibold leading-tight text-white">{track.title}</p>
+                            <p className="mt-1 truncate text-sm text-[var(--app-muted)]">{track.artist}</p>
+                          </div>
+                        </div>
 
-                  <div className="min-w-0 text-center">
-                    <p className="truncate text-2xl font-semibold leading-tight text-white">{track.title}</p>
-                    <p className="mt-2 truncate text-base text-[var(--app-muted)]">{track.artist}</p>
-                  </div>
+                        <div className="mt-4 space-y-2">
+                          <input
+                            type="range"
+                            min={0}
+                            max={scrubMax}
+                            step={0.01}
+                            value={scrubValue}
+                            onInput={(event) => seekTo(Number(event.currentTarget.value))}
+                            onChange={(event) => seekTo(Number(event.currentTarget.value))}
+                            className="player-range h-10 w-full"
+                            style={progressRangeStyle}
+                            aria-label="Song position"
+                          />
+                          <div className="flex justify-between font-mono text-xs text-[var(--app-muted)]">
+                            <span>{formatTime(currentTime)}</span>
+                            <span>{formatTime(duration)}</span>
+                          </div>
+                        </div>
 
-                  <div className="space-y-2">
-                    <input
-                      type="range"
-                      min={0}
-                      max={scrubMax}
-                      step={0.01}
-                      value={scrubValue}
-                      onInput={(event) => seekTo(Number(event.currentTarget.value))}
-                      onChange={(event) => seekTo(Number(event.currentTarget.value))}
-                      className="player-range h-10 w-full"
-                      style={progressRangeStyle}
-                      aria-label="Song position"
-                    />
-                    <div className="flex justify-between font-mono text-xs text-[var(--app-muted)]">
-                      <span>{formatTime(currentTime)}</span>
-                      <span>{formatTime(duration)}</span>
-                    </div>
-                  </div>
+                        <div className="mt-4">
+                          {renderExpandedControls(true)}
+                        </div>
+                      </div>
 
-                  {isQueueOpen
-                    ? renderQueuePanel(
-                        "max-h-[15.5rem] overflow-hidden rounded-3xl border border-white/[0.08] bg-[rgba(27,27,27,0.74)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl",
-                        "max-h-[10rem]"
-                      )
-                    : null}
+                      {renderQueuePanel(
+                        "min-h-0 flex-1 overflow-hidden rounded-[28px] border border-white/[0.08] bg-[rgba(32,32,32,0.76)] shadow-[0_18px_60px_rgba(0,0,0,0.42)] backdrop-blur-xl",
+                        "h-full max-h-none"
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div className="mx-auto w-[78vw] max-w-[22rem]">
+                        {track.coverDataUrl ? (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img
+                            src={track.coverDataUrl}
+                            alt=""
+                            className="aspect-square w-full rounded-[28px] object-cover shadow-[0_28px_90px_rgba(0,0,0,0.5)]"
+                          />
+                        ) : (
+                          <div className="aspect-square w-full rounded-[28px] border border-[var(--app-border)] bg-[var(--app-glass)] shadow-[0_28px_90px_rgba(0,0,0,0.5)]" />
+                        )}
+                      </div>
 
-                  <div className="flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={toggleShuffle}
-                      aria-label="Shuffle"
-                      aria-pressed={isShuffleOn}
-                      title="Shuffle"
-                      className={`flex h-12 w-12 items-center justify-center rounded-full transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
-                        isShuffleOn ? "bg-white text-black" : "text-[var(--app-muted)]"
-                      }`}
-                    >
-                      <PlayerIcon name="shuffle" className="h-5 w-5" />
-                    </button>
+                      <div className="min-w-0 text-center">
+                        <p className="truncate text-2xl font-semibold leading-tight text-white">{track.title}</p>
+                        <p className="mt-2 truncate text-base text-[var(--app-muted)]">{track.artist}</p>
+                      </div>
 
-                    <button
-                      type="button"
-                      onClick={playPrevious}
-                      disabled={!canPlayPrevious}
-                      aria-label="Back"
-                      title="Back"
-                      className="flex h-14 w-14 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
-                    >
-                      <PlayerIcon name="previous" className="h-7 w-7" />
-                    </button>
+                      <div className="space-y-2">
+                        <input
+                          type="range"
+                          min={0}
+                          max={scrubMax}
+                          step={0.01}
+                          value={scrubValue}
+                          onInput={(event) => seekTo(Number(event.currentTarget.value))}
+                          onChange={(event) => seekTo(Number(event.currentTarget.value))}
+                          className="player-range h-10 w-full"
+                          style={progressRangeStyle}
+                          aria-label="Song position"
+                        />
+                        <div className="flex justify-between font-mono text-xs text-[var(--app-muted)]">
+                          <span>{formatTime(currentTime)}</span>
+                          <span>{formatTime(duration)}</span>
+                        </div>
+                      </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setIsPlaying((current) => !current)}
-                      aria-label={isPlaying ? "Pause" : "Play"}
-                      title={isPlaying ? "Pause" : "Play"}
-                      className="flex h-20 w-20 items-center justify-center rounded-full bg-white text-black shadow-[0_18px_50px_rgba(0,0,0,0.35)] transition active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
-                    >
-                      <PlayerIcon name={isPlaying ? "pause" : "play"} className="h-8 w-8" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={playNext}
-                      disabled={!canPlayNext}
-                      aria-label="Skip"
-                      title="Skip"
-                      className="flex h-14 w-14 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
-                    >
-                      <PlayerIcon name="next" className="h-7 w-7" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setIsQueueOpen((current) => !current)}
-                      aria-label="Queue"
-                      aria-pressed={isQueueOpen}
-                      title="Queue"
-                      className={`flex h-12 w-12 items-center justify-center rounded-full transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
-                        isQueueOpen ? "bg-white text-black" : "text-[var(--app-muted)]"
-                      }`}
-                    >
-                      <PlayerIcon name="queue" className="h-5 w-5" />
-                    </button>
-                  </div>
+                      {renderExpandedControls()}
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -954,15 +1112,15 @@ export default function PlayerBridge() {
 
                 <button
                   type="button"
-                  onClick={toggleShuffle}
-                  aria-label="Shuffle"
-                  aria-pressed={isShuffleOn}
-                  title="Shuffle"
+                  onClick={cyclePlaybackMode}
+                  aria-label={playbackModeTitle(playbackMode)}
+                  aria-pressed={playbackMode !== "normal"}
+                  title={playbackModeTitle(playbackMode)}
                   className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/[0.08] sm:flex ${
-                    isShuffleOn ? "bg-white text-black" : "text-[var(--app-muted)]"
+                    playbackMode !== "normal" ? "bg-white text-black" : "text-[var(--app-muted)]"
                   }`}
                 >
-                  <PlayerIcon name="shuffle" />
+                  <PlayerIcon name={playbackModeIcon(playbackMode)} />
                 </button>
 
                 <button

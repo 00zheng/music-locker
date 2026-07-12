@@ -261,7 +261,7 @@ function InlineIcon({
   name,
   className = "h-4 w-4",
 }: {
-  name: "play" | "folder" | "add" | "back" | "more";
+  name: "play" | "folder" | "add" | "back" | "more" | "queue" | "edit" | "download" | "remove" | "trash";
   className?: string;
 }) {
   return (
@@ -292,6 +292,36 @@ function InlineIcon({
         <>
           <path d="M12 5v14" />
           <path d="M5 12h14" />
+        </>
+      ) : name === "queue" ? (
+        <>
+          <path d="M4 7h16" />
+          <path d="M4 12h16" />
+          <path d="M4 17h10" />
+          <path d="m17 17 3 3 3-3" />
+        </>
+      ) : name === "edit" ? (
+        <>
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+        </>
+      ) : name === "download" ? (
+        <>
+          <path d="M12 3v12" />
+          <path d="m7 10 5 5 5-5" />
+          <path d="M5 21h14" />
+        </>
+      ) : name === "remove" ? (
+        <>
+          <path d="M5 12h14" />
+          <path d="M4 5h16" />
+          <path d="M6 5l1 16h10l1-16" />
+        </>
+      ) : name === "trash" ? (
+        <>
+          <path d="M4 7h16" />
+          <path d="M6 7l1 14h10l1-14" />
+          <path d="M9 7V4h6v3" />
         </>
       ) : (
         <>
@@ -1262,6 +1292,28 @@ export default function LibraryScreen({ playlistId }: Props) {
     setOpenPlaylistMenuId(null);
   }
 
+  function addTrackToQueue(track: Track) {
+    const displayTitle = trackMetadataById[track.id]?.title || track.title;
+
+    if (!navigator.onLine && !track.offlineUrl) {
+      setStatus("This song is not downloaded for offline playback.");
+      setOpenTrackMenuId(null);
+      return;
+    }
+
+    const queuedTrack = playerTrackFromTrack(track, activePlaylist);
+
+    if (!queuedTrack.audioUrl) {
+      setStatus("Could not add this song because its playback link is missing.");
+      setOpenTrackMenuId(null);
+      return;
+    }
+
+    dispatchAppendQueue([queuedTrack]);
+    setStatus(`Added "${displayTitle}" to queue.`);
+    setOpenTrackMenuId(null);
+  }
+
   function playTrackAtIndex(index: number) {
     if (visibleTracks.length === 0) {
       return;
@@ -1701,17 +1753,17 @@ export default function LibraryScreen({ playlistId }: Props) {
                       </div>
 
                       {openPlaylistMenuId === playlist.id && !isBuiltInPlaylist ? (
-                        <div className="relative z-30 mt-3 w-full overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.86)] p-2 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:absolute sm:right-2 sm:top-2 sm:mt-0 sm:w-56">
+                        <div className="absolute right-2 top-[calc(100%-2.25rem)] z-50 w-[min(15rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-white/[0.1] bg-[rgba(24,24,24,0.92)] p-2 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl sm:top-2">
                           <button
                             type="button"
                             onClick={() => addPlaylistToQueue(playlist)}
-                            className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
+                            className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08]"
                           >
-                            <span aria-hidden="true">+</span>
+                            <InlineIcon name="queue" className="h-4 w-4 text-[var(--app-muted)]" />
                             Add to queue
                           </button>
                           {renamingPlaylistId === playlist.id ? (
-                            <div className="px-3 py-2">
+                            <div className="my-1 rounded-xl bg-white/[0.04] px-3 py-2">
                               <input
                                 type="text"
                                 value={playlistRenameValue}
@@ -1750,12 +1802,13 @@ export default function LibraryScreen({ playlistId }: Props) {
                             <button
                               type="button"
                               onClick={() => startRenamingPlaylist(playlist)}
-                              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
+                              className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08]"
                             >
+                              <InlineIcon name="edit" className="h-4 w-4 text-[var(--app-muted)]" />
                               Rename
                             </button>
                           )}
-                          <label className="block px-3 py-2">
+                          <label className="my-1 block rounded-xl bg-white/[0.04] px-3 py-2">
                             <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">
                               Move
                             </span>
@@ -1775,8 +1828,9 @@ export default function LibraryScreen({ playlistId }: Props) {
                           <button
                             type="button"
                             onClick={() => deletePlaylist(playlist)}
-                            className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-red-300 hover:bg-white/[0.08]"
+                            className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-red-300 transition hover:bg-red-500/[0.12]"
                           >
+                            <InlineIcon name="trash" className="h-4 w-4" />
                             Delete playlist
                           </button>
                         </div>
@@ -1946,6 +2000,8 @@ export default function LibraryScreen({ playlistId }: Props) {
                         isCurrentTrack ? "bg-green-500/10 text-green-300" : ""
                       } ${
                         isSelected ? "bg-white/[0.08]" : ""
+                      } ${
+                        openTrackMenuId === track.id ? "z-30" : ""
                       }`}
                     >
                       <button
@@ -2013,8 +2069,8 @@ export default function LibraryScreen({ playlistId }: Props) {
                         </button>
 
                         {openTrackMenuId === track.id ? (
-                          <div className="absolute right-0 top-10 z-20 w-56 overflow-hidden rounded-xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.86)] py-1 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur">
-                            <div className="border-b border-white/[0.08] px-3 py-2">
+                          <div className="absolute right-0 top-11 z-40 w-[min(16rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-white/[0.1] bg-[rgba(24,24,24,0.92)] p-2 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+                            <div className="mb-1 rounded-xl bg-white/[0.04] px-3 py-2">
                               <p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Properties</p>
                               <p className="mt-1 truncate text-xs text-[var(--app-muted)]">Date: {trackDate || "Unknown"}</p>
                               <p className="truncate text-xs text-[var(--app-muted)]">Size: {formatFileSize(track.file_size)}</p>
@@ -2022,17 +2078,27 @@ export default function LibraryScreen({ playlistId }: Props) {
                             </div>
                             <button
                               type="button"
-                              onClick={() => startRenamingTrack(track)}
-                              className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
+                              onClick={() => addTrackToQueue(track)}
+                              className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08]"
                             >
+                              <InlineIcon name="queue" className="h-4 w-4 text-[var(--app-muted)]" />
+                              Add to queue
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => startRenamingTrack(track)}
+                              className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08]"
+                            >
+                              <InlineIcon name="edit" className="h-4 w-4 text-[var(--app-muted)]" />
                               Rename
                             </button>
                             {track.isOfflineAvailable ? (
                               <button
                                 type="button"
                                 onClick={() => void removeTrackOffline(track)}
-                                className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08]"
+                                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08]"
                               >
+                                <InlineIcon name="remove" className="h-4 w-4 text-[var(--app-muted)]" />
                                 Remove offline
                               </button>
                             ) : (
@@ -2040,8 +2106,9 @@ export default function LibraryScreen({ playlistId }: Props) {
                                 type="button"
                                 onClick={() => void downloadTrackOffline(track)}
                                 disabled={!track.signedUrl}
-                                className="block w-full px-3 py-2 text-left text-[var(--app-text)] hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
                               >
+                                <InlineIcon name="download" className="h-4 w-4 text-[var(--app-muted)]" />
                                 Download offline
                               </button>
                             )}
@@ -2049,8 +2116,9 @@ export default function LibraryScreen({ playlistId }: Props) {
                               <button
                                 type="button"
                                 onClick={() => removeTrackFromPlaylist(track.id)}
-                                className="block w-full px-3 py-2 text-left text-red-300 hover:bg-white/[0.08]"
+                                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-red-300 transition hover:bg-red-500/[0.12]"
                               >
+                                <InlineIcon name="remove" className="h-4 w-4" />
                                 Remove from playlist
                               </button>
                             ) : null}
@@ -2058,8 +2126,9 @@ export default function LibraryScreen({ playlistId }: Props) {
                               type="button"
                               onClick={() => void deleteTracks([track.id])}
                               disabled={isDeletingTracks}
-                              className="block w-full px-3 py-2 text-left text-red-300 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                              className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-red-300 transition hover:bg-red-500/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
                             >
+                              <InlineIcon name="trash" className="h-4 w-4" />
                               Delete track
                             </button>
                           </div>
