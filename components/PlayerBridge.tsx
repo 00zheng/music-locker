@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type PlayerTrack = {
   id: string;
@@ -18,12 +18,66 @@ type PlayerRequest = {
 const PLAY_EVENT = "music-locker:play-track";
 const APPEND_EVENT = "music-locker:append-track-queue";
 export const CURRENT_TRACK_EVENT = "music-locker:current-track";
+const APP_ICON_ARTWORK = [
+  { src: "/icon-192x192.png", sizes: "192x192", type: "image/png" },
+  { src: "/icon-512x512.png", sizes: "512x512", type: "image/png" },
+];
+const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
+  "play",
+  "pause",
+  "previoustrack",
+  "nexttrack",
+  "seekbackward",
+  "seekforward",
+  "seekto",
+  "stop",
+];
 
 function formatTime(value: number) {
   const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
   const minutes = Math.floor(safeValue / 60);
   const seconds = Math.floor(safeValue % 60).toString().padStart(2, "0");
   return `${minutes}:${seconds}`;
+}
+
+function imageTypeFromSource(src: string) {
+  if (!src.startsWith("data:image/")) {
+    return undefined;
+  }
+
+  return src.slice("data:".length).split(";")[0] || undefined;
+}
+
+function artworkForTrack(track: PlayerTrack) {
+  const coverSrc = track.coverDataUrl?.trim();
+
+  if (!coverSrc) {
+    return APP_ICON_ARTWORK;
+  }
+
+  return [
+    { src: coverSrc, sizes: "512x512", type: imageTypeFromSource(coverSrc) },
+    ...APP_ICON_ARTWORK,
+  ];
+}
+
+function getMediaSession() {
+  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
+    return null;
+  }
+
+  return navigator.mediaSession;
+}
+
+function setMediaSessionAction(
+  action: MediaSessionAction,
+  handler: MediaSessionActionHandler | null
+) {
+  try {
+    getMediaSession()?.setActionHandler(action, handler);
+  } catch {
+    // Browsers vary in which Media Session actions they expose.
+  }
 }
 
 function PlayerIcon({
@@ -301,7 +355,7 @@ export default function PlayerBridge() {
     };
   }, [duration, track]);
 
-  function playPrevious() {
+  const playPrevious = useCallback(() => {
     const audio = audioRef.current;
 
     if (audio && audio.currentTime > 3) {
@@ -314,9 +368,9 @@ export default function PlayerBridge() {
     setCurrentTime(0);
     setDuration(0);
     setIsPlaying(true);
-  }
+  }, []);
 
-  function nextIndex() {
+  const nextIndex = useCallback(() => {
     if (!isShuffleOn || queue.length <= 1) {
       return Math.min(queue.length - 1, queueIndex + 1);
     }
@@ -326,9 +380,9 @@ export default function PlayerBridge() {
       .filter((index) => index !== queueIndex);
 
     return possibleIndexes[Math.floor(Math.random() * possibleIndexes.length)] ?? queueIndex;
-  }
+  }, [isShuffleOn, queue, queueIndex]);
 
-  function playNext() {
+  const playNext = useCallback(() => {
     if (queue.length === 0) {
       return;
     }
@@ -343,9 +397,9 @@ export default function PlayerBridge() {
     setCurrentTime(0);
     setDuration(0);
     setIsPlaying(true);
-  }
+  }, [isShuffleOn, nextIndex, queue.length, queueIndex]);
 
-  function handleEnded() {
+  const handleEnded = useCallback(() => {
     if (isShuffleOn || queueIndex < queue.length - 1) {
       setQueueIndex(nextIndex());
       setCurrentTime(0);
@@ -356,7 +410,81 @@ export default function PlayerBridge() {
 
     setIsPlaying(false);
     dispatchCurrentTrack(null);
-  }
+  }, [isShuffleOn, nextIndex, queue.length, queueIndex]);
+
+  useEffect(() => {
+    const mediaSession = getMediaSession();
+
+    if (!mediaSession) {
+      return;
+    }
+
+    if (!track) {
+      mediaSession.metadata = null;
+      mediaSession.playbackState = "none";
+      MEDIA_SESSION_ACTIONS.forEach((action) => setMediaSessionAction(action, null));
+      return;
+    }
+
+    if (typeof MediaMetadata !== "undefined") {
+      try {
+        mediaSession.metadata = new MediaMetadata({
+          title: track.title || "Music Locker",
+          artist: track.artist || "Unknown artist",
+          album: "Music Locker",
+          artwork: artworkForTrack(track),
+        });
+      } catch {
+        mediaSession.metadata = null;
+      }
+    }
+
+    setMediaSessionAction("play", () => setIsPlaying(true));
+    setMediaSessionAction("pause", () => setIsPlaying(false));
+    setMediaSessionAction("previoustrack", playPrevious);
+    setMediaSessionAction("nexttrack", queue.length > 1 ? playNext : null);
+    setMediaSessionAction("seekbackward", null);
+    setMediaSessionAction("seekforward", null);
+    setMediaSessionAction("seekto", null);
+    setMediaSessionAction("stop", () => setIsPlaying(false));
+
+    return () => {
+      mediaSession.metadata = null;
+      MEDIA_SESSION_ACTIONS.forEach((action) => setMediaSessionAction(action, null));
+    };
+  }, [playNext, playPrevious, queue.length, track]);
+
+  useEffect(() => {
+    const mediaSession = getMediaSession();
+
+    if (!mediaSession) {
+      return;
+    }
+
+    mediaSession.playbackState = track ? (isPlaying ? "playing" : "paused") : "none";
+
+    const audio = audioRef.current;
+    const audioDuration =
+      Number.isFinite(duration) && duration > 0
+        ? duration
+        : audio && Number.isFinite(audio.duration)
+          ? audio.duration
+          : 0;
+
+    if (!track || audioDuration <= 0 || typeof mediaSession.setPositionState !== "function") {
+      return;
+    }
+
+    try {
+      mediaSession.setPositionState({
+        duration: audioDuration,
+        playbackRate: audio?.playbackRate || 1,
+        position: Math.min(Math.max(0, currentTime), audioDuration),
+      });
+    } catch {
+      // Ignore browsers that reject position state for streamed or unknown-duration audio.
+    }
+  }, [currentTime, duration, isPlaying, track]);
 
   return (
     <>
