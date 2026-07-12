@@ -392,6 +392,8 @@ export default function PlayerBridge() {
   const suppressQueueClickRef = useRef(false);
   const bodyUserSelectBeforeDragRef = useRef<string | null>(null);
   const queueTouchActionBeforeDragRef = useRef<string | null>(null);
+  const queueOverflowYBeforeDragRef = useRef<string | null>(null);
+  const queueTouchMoveBlockerActiveRef = useRef(false);
   const [currentTrack, setCurrentTrack] = useState<PlayerTrack | null>(null);
   const [manualQueue, setManualQueue] = useState<QueueEntry[]>([]);
   const [contextQueue, setContextQueue] = useState<QueueEntry[]>([]);
@@ -979,6 +981,59 @@ export default function PlayerBridge() {
     }
   }, []);
 
+  const preventQueueDragTouchScroll = useCallback((event: globalThis.TouchEvent) => {
+    if (!queueDragRef.current) {
+      return;
+    }
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+  }, []);
+
+  const lockQueueNativeScroll = useCallback(() => {
+    const scrollElement = queueScrollRef.current;
+
+    if (scrollElement) {
+      if (queueTouchActionBeforeDragRef.current === null) {
+        queueTouchActionBeforeDragRef.current = scrollElement.style.touchAction;
+      }
+
+      if (queueOverflowYBeforeDragRef.current === null) {
+        queueOverflowYBeforeDragRef.current = scrollElement.style.overflowY;
+      }
+
+      scrollElement.style.touchAction = "none";
+      scrollElement.style.overflowY = "hidden";
+    }
+
+    if (!queueTouchMoveBlockerActiveRef.current) {
+      scrollElement?.addEventListener("touchmove", preventQueueDragTouchScroll, { passive: false });
+      document.addEventListener("touchmove", preventQueueDragTouchScroll, { passive: false });
+      queueTouchMoveBlockerActiveRef.current = true;
+    }
+  }, [preventQueueDragTouchScroll]);
+
+  const unlockQueueNativeScroll = useCallback(() => {
+    const scrollElement = queueScrollRef.current;
+
+    if (scrollElement && queueTouchActionBeforeDragRef.current !== null) {
+      scrollElement.style.touchAction = queueTouchActionBeforeDragRef.current;
+      queueTouchActionBeforeDragRef.current = null;
+    }
+
+    if (scrollElement && queueOverflowYBeforeDragRef.current !== null) {
+      scrollElement.style.overflowY = queueOverflowYBeforeDragRef.current;
+      queueOverflowYBeforeDragRef.current = null;
+    }
+
+    if (queueTouchMoveBlockerActiveRef.current) {
+      scrollElement?.removeEventListener("touchmove", preventQueueDragTouchScroll);
+      document.removeEventListener("touchmove", preventQueueDragTouchScroll);
+      queueTouchMoveBlockerActiveRef.current = false;
+    }
+  }, [preventQueueDragTouchScroll]);
+
   const reorderQueue = useCallback((fromItem: QueueDragTarget, toItem: QueueDragTarget) => {
     if (
       fromItem.source !== toItem.source ||
@@ -1127,16 +1182,13 @@ export default function PlayerBridge() {
       bodyUserSelectBeforeDragRef.current = null;
     }
 
-    if (queueScrollRef.current && queueTouchActionBeforeDragRef.current !== null) {
-      queueScrollRef.current.style.touchAction = queueTouchActionBeforeDragRef.current;
-      queueTouchActionBeforeDragRef.current = null;
-    }
+    unlockQueueNativeScroll();
 
     suppressQueueClickRef.current = true;
     window.setTimeout(() => {
       suppressQueueClickRef.current = false;
     }, 250);
-  }, [clearQueueLongPressTimer, stopQueueAutoScroll]);
+  }, [clearQueueLongPressTimer, stopQueueAutoScroll, unlockQueueNativeScroll]);
 
   const beginQueueLongPress = useCallback((item: QueueDisplayItem, event: PointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "touch" || isRepeatOneOn || item.source === "current" || event.button !== 0) {
@@ -1194,10 +1246,7 @@ export default function PlayerBridge() {
       setQueueDragState(nextDrag);
       bodyUserSelectBeforeDragRef.current = document.body.style.userSelect;
       document.body.style.userSelect = "none";
-      if (queueScrollRef.current) {
-        queueTouchActionBeforeDragRef.current = queueScrollRef.current.style.touchAction;
-        queueScrollRef.current.style.touchAction = "none";
-      }
+      lockQueueNativeScroll();
 
       try {
         queuedPress.target.setPointerCapture(event.pointerId);
@@ -1209,7 +1258,7 @@ export default function PlayerBridge() {
 
       startQueueAutoScroll();
     }, 240);
-  }, [clearQueueLongPressTimer, closeQueueMenu, isRepeatOneOn, startQueueAutoScroll]);
+  }, [clearQueueLongPressTimer, closeQueueMenu, isRepeatOneOn, lockQueueNativeScroll, startQueueAutoScroll]);
 
   const beginQueueTouchLongPress = useCallback((item: QueueDisplayItem, event: TouchEvent<HTMLDivElement>) => {
     if (isRepeatOneOn || item.source === "current" || event.touches.length !== 1) {
@@ -1269,16 +1318,13 @@ export default function PlayerBridge() {
       setQueueDragState(nextDrag);
       bodyUserSelectBeforeDragRef.current = document.body.style.userSelect;
       document.body.style.userSelect = "none";
-      if (queueScrollRef.current) {
-        queueTouchActionBeforeDragRef.current = queueScrollRef.current.style.touchAction;
-        queueScrollRef.current.style.touchAction = "none";
-      }
+      lockQueueNativeScroll();
 
       (navigator as Navigator & { vibrate?: (pattern: number) => boolean }).vibrate?.(8);
 
       startQueueAutoScroll();
     }, 260);
-  }, [clearQueueLongPressTimer, closeQueueMenu, isRepeatOneOn, startQueueAutoScroll]);
+  }, [clearQueueLongPressTimer, closeQueueMenu, isRepeatOneOn, lockQueueNativeScroll, startQueueAutoScroll]);
 
   const moveQueueLongPress = useCallback((event: PointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "touch") {
@@ -1390,11 +1436,8 @@ export default function PlayerBridge() {
       bodyUserSelectBeforeDragRef.current = null;
     }
 
-    if (queueScrollRef.current && queueTouchActionBeforeDragRef.current !== null) {
-      queueScrollRef.current.style.touchAction = queueTouchActionBeforeDragRef.current;
-      queueTouchActionBeforeDragRef.current = null;
-    }
-  }, [clearQueueLongPressTimer, stopQueueAutoScroll]);
+    unlockQueueNativeScroll();
+  }, [clearQueueLongPressTimer, stopQueueAutoScroll, unlockQueueNativeScroll]);
 
   const removeQueuedItem = useCallback((item: QueueDisplayItem) => {
     closeQueueMenu();
