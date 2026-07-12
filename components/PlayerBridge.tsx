@@ -11,6 +11,7 @@ import {
   type MouseEvent,
   type PointerEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 
 type PlayerTrack = {
@@ -388,6 +389,7 @@ export default function PlayerBridge() {
   const displayedQueueItemsRef = useRef<QueueDisplayItem[]>([]);
   const suppressQueueClickRef = useRef(false);
   const bodyUserSelectBeforeDragRef = useRef<string | null>(null);
+  const queueTouchActionBeforeDragRef = useRef<string | null>(null);
   const [currentTrack, setCurrentTrack] = useState<PlayerTrack | null>(null);
   const [manualQueue, setManualQueue] = useState<QueueEntry[]>([]);
   const [contextQueue, setContextQueue] = useState<QueueEntry[]>([]);
@@ -1058,8 +1060,8 @@ export default function PlayerBridge() {
     }
 
     const bounds = scrollElement.getBoundingClientRect();
-    const edgeSize = 72;
-    const maxStep = 18;
+    const edgeSize = 48;
+    const maxStep = 16;
     let scrollStep = 0;
 
     if (drag.currentY < bounds.top + edgeSize) {
@@ -1110,6 +1112,11 @@ export default function PlayerBridge() {
     if (bodyUserSelectBeforeDragRef.current !== null) {
       document.body.style.userSelect = bodyUserSelectBeforeDragRef.current;
       bodyUserSelectBeforeDragRef.current = null;
+    }
+
+    if (queueScrollRef.current && queueTouchActionBeforeDragRef.current !== null) {
+      queueScrollRef.current.style.touchAction = queueTouchActionBeforeDragRef.current;
+      queueTouchActionBeforeDragRef.current = null;
     }
 
     suppressQueueClickRef.current = true;
@@ -1174,6 +1181,10 @@ export default function PlayerBridge() {
       setQueueDragState(nextDrag);
       bodyUserSelectBeforeDragRef.current = document.body.style.userSelect;
       document.body.style.userSelect = "none";
+      if (queueScrollRef.current) {
+        queueTouchActionBeforeDragRef.current = queueScrollRef.current.style.touchAction;
+        queueScrollRef.current.style.touchAction = "none";
+      }
 
       try {
         queuedPress.target.setPointerCapture(event.pointerId);
@@ -1231,6 +1242,16 @@ export default function PlayerBridge() {
   useEffect(() => () => {
     clearQueueLongPressTimer();
     stopQueueAutoScroll();
+
+    if (bodyUserSelectBeforeDragRef.current !== null) {
+      document.body.style.userSelect = bodyUserSelectBeforeDragRef.current;
+      bodyUserSelectBeforeDragRef.current = null;
+    }
+
+    if (queueScrollRef.current && queueTouchActionBeforeDragRef.current !== null) {
+      queueScrollRef.current.style.touchAction = queueTouchActionBeforeDragRef.current;
+      queueTouchActionBeforeDragRef.current = null;
+    }
   }, [clearQueueLongPressTimer, stopQueueAutoScroll]);
 
   const removeQueuedItem = useCallback((item: QueueDisplayItem) => {
@@ -1438,7 +1459,7 @@ export default function PlayerBridge() {
               onPointerCancel={endQueueLongPress}
               className={`relative flex min-h-16 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-[background-color,box-shadow,opacity,transform] duration-200 ease-out ${
                 item.source === "current" ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-[var(--app-muted)] hover:bg-white/[0.08]"
-              } ${isDraggedItem ? "opacity-0" : "opacity-100"}`}
+              } ${isDraggedItem ? "bg-white/[0.08] opacity-30 ring-1 ring-white/[0.08]" : "opacity-100"}`}
             >
               <button
                 type="button"
@@ -1475,7 +1496,13 @@ export default function PlayerBridge() {
               <button
                 type="button"
                 data-queue-action
-                onPointerDown={(event) => event.stopPropagation()}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  clearQueueLongPressTimer();
+                  queuePressRef.current = null;
+                }}
+                onPointerUp={(event) => event.stopPropagation()}
+                onPointerCancel={(event) => event.stopPropagation()}
                 onClick={(event) => toggleQueueMenu(item, event)}
                 className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
                 aria-label={`Open queue menu for ${item.track.title}`}
@@ -1490,64 +1517,71 @@ export default function PlayerBridge() {
           );
         })}
       </div>
-      {queueDragState ? (
-        <div
-          className="pointer-events-none fixed z-[420] flex min-h-16 items-center gap-3 rounded-2xl bg-[rgba(54,54,54,0.96)] px-3 py-2.5 text-left text-white opacity-95 shadow-[0_26px_70px_rgba(0,0,0,0.58)] ring-1 ring-white/[0.12] backdrop-blur-xl"
-          style={{
-            left: queueDragState.rowLeft,
-            top: queueDragState.currentY - queueDragState.offsetY,
-            width: queueDragState.rowWidth,
-            transform: "scale(1.035)",
-          }}
-        >
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/[0.08] font-mono text-xs text-white shadow-[0_10px_30px_rgba(0,0,0,0.24)]">
-            {queueDragState.track.coverDataUrl ? (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img src={queueDragState.track.coverDataUrl} alt="" className="h-full w-full object-cover" />
-            ) : (
-              queueDragState.index + 1
-            )}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-base font-semibold text-white">{queueDragState.track.title}</span>
-            <span className="block truncate text-xs text-[var(--app-muted)]">{queueDragState.track.artist}</span>
-          </span>
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-white/60">
-            <span className="h-1 w-1 rounded-full bg-current" />
-            <span className="h-1 w-1 rounded-full bg-current" />
-            <span className="h-1 w-1 rounded-full bg-current" />
-          </span>
-        </div>
-      ) : null}
-      {openQueueMenuItem && queueMenuPosition ? (
-        <div
-          data-queue-menu-root
-          className="fixed z-[430] w-[min(17.5rem,calc(100vw-1.5rem))] overflow-hidden rounded-[2rem] border border-white/[0.08] bg-[rgba(12,12,12,0.96)] p-3 text-lg font-semibold text-white shadow-[0_28px_70px_rgba(0,0,0,0.62)] backdrop-blur-2xl"
-          style={{
-            top: queueMenuPosition.top,
-            left: queueMenuPosition.left,
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => goToQueuedTrackProject(openQueueMenuItem.track)}
-            className="flex min-h-16 w-full items-center gap-4 rounded-3xl px-4 text-left transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
-          >
-            <PlayerIcon name="external" className="h-8 w-8 shrink-0" />
-            <span>Go to project</span>
-          </button>
-          {openQueueMenuItem.source !== "current" ? (
-            <button
-              type="button"
-              onClick={() => removeQueuedItem(openQueueMenuItem)}
-              className="mt-1 flex min-h-20 w-full items-center gap-4 rounded-3xl px-4 text-left text-red-400 transition hover:bg-red-500/[0.14] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200"
-            >
-              <PlayerIcon name="minusCircle" className="h-8 w-8 shrink-0" />
-              <span>Remove from queue</span>
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      {typeof document !== "undefined"
+        ? createPortal(
+          <>
+            {queueDragState ? (
+              <div
+                className="pointer-events-none fixed z-[1000] flex min-h-16 items-center gap-3 rounded-2xl bg-[rgba(54,54,54,0.98)] px-3 py-2.5 text-left text-white opacity-100 shadow-[0_26px_70px_rgba(0,0,0,0.62)] ring-1 ring-white/[0.14] backdrop-blur-xl"
+                style={{
+                  left: queueDragState.rowLeft,
+                  top: queueDragState.currentY - queueDragState.offsetY,
+                  width: queueDragState.rowWidth,
+                  transform: "scale(1.035)",
+                }}
+              >
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/[0.08] font-mono text-xs text-white shadow-[0_10px_30px_rgba(0,0,0,0.24)]">
+                  {queueDragState.track.coverDataUrl ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={queueDragState.track.coverDataUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    queueDragState.index + 1
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-base font-semibold text-white">{queueDragState.track.title}</span>
+                  <span className="block truncate text-xs text-[var(--app-muted)]">{queueDragState.track.artist}</span>
+                </span>
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-white/60">
+                  <span className="h-1 w-1 rounded-full bg-current" />
+                  <span className="h-1 w-1 rounded-full bg-current" />
+                  <span className="h-1 w-1 rounded-full bg-current" />
+                </span>
+              </div>
+            ) : null}
+            {openQueueMenuItem && queueMenuPosition ? (
+              <div
+                data-queue-menu-root
+                className="fixed z-[1010] w-[min(17.5rem,calc(100vw-1.5rem))] overflow-hidden rounded-[2rem] border border-white/[0.08] bg-[rgba(12,12,12,0.98)] p-3 text-lg font-semibold text-white shadow-[0_28px_70px_rgba(0,0,0,0.66)] backdrop-blur-2xl"
+                style={{
+                  top: queueMenuPosition.top,
+                  left: queueMenuPosition.left,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => goToQueuedTrackProject(openQueueMenuItem.track)}
+                  className="flex min-h-16 w-full items-center gap-4 rounded-3xl px-4 text-left transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+                >
+                  <PlayerIcon name="external" className="h-8 w-8 shrink-0" />
+                  <span>Go to project</span>
+                </button>
+                {openQueueMenuItem.source !== "current" ? (
+                  <button
+                    type="button"
+                    onClick={() => removeQueuedItem(openQueueMenuItem)}
+                    className="mt-1 flex min-h-20 w-full items-center gap-4 rounded-3xl px-4 text-left text-red-400 transition hover:bg-red-500/[0.14] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200"
+                  >
+                    <PlayerIcon name="minusCircle" className="h-8 w-8 shrink-0" />
+                    <span>Remove from queue</span>
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </>,
+          document.body
+        )
+        : null}
     </div>
   );
 
