@@ -1479,7 +1479,7 @@ export default function LibraryScreen({ playlistId }: Props) {
           )}
         </div>
         <div className="min-w-0">
-          <p className="truncate text-xl font-semibold text-white">{openPlaylistForMenu.name}</p>
+          <p className="truncate text-xl font-semibold text-[var(--app-text)]">{openPlaylistForMenu.name}</p>
           <p className="mt-1 text-sm text-[var(--app-muted)]">
             Playlist - {formatCount(openPlaylistMenuTracks.length)}
           </p>
@@ -1524,7 +1524,7 @@ export default function LibraryScreen({ playlistId }: Props) {
               <button
                 type="button"
                 onClick={cancelRenamingPlaylist}
-                className="min-h-11 rounded-xl border border-[var(--app-border)] px-3 py-2 text-sm font-semibold text-[var(--app-muted)] transition hover:text-white"
+                className="min-h-11 rounded-xl border border-[var(--app-border)] px-3 py-2 text-sm font-semibold text-[var(--app-muted)] transition hover:text-[var(--app-text)]"
               >
                 Cancel
               </button>
@@ -1554,7 +1554,7 @@ export default function LibraryScreen({ playlistId }: Props) {
           )}
         </div>
         <div className="min-w-0">
-          <p className="truncate text-xl font-semibold text-white">{openTrackMenuTitle}</p>
+          <p className="truncate text-xl font-semibold text-[var(--app-text)]">{openTrackMenuTitle}</p>
           <p className="mt-1 truncate text-sm text-[var(--app-muted)]">{openTrackMenuArtist}</p>
         </div>
       </div>
@@ -1563,11 +1563,11 @@ export default function LibraryScreen({ playlistId }: Props) {
         <p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Properties</p>
         <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
           <dt className="text-[var(--app-muted)]">Date</dt>
-          <dd className="min-w-0 truncate text-white">{formatTrackDate(openTrackForMenu.created_at) || "Unknown"}</dd>
+          <dd className="min-w-0 truncate text-[var(--app-text)]">{formatTrackDate(openTrackForMenu.created_at) || "Unknown"}</dd>
           <dt className="text-[var(--app-muted)]">Size</dt>
-          <dd className="min-w-0 truncate text-white">{formatFileSize(openTrackForMenu.file_size)}</dd>
+          <dd className="min-w-0 truncate text-[var(--app-text)]">{formatFileSize(openTrackForMenu.file_size)}</dd>
           <dt className="text-[var(--app-muted)]">Type</dt>
-          <dd className="min-w-0 truncate text-white">{openTrackForMenu.mime_type || "Unknown"}</dd>
+          <dd className="min-w-0 truncate text-[var(--app-text)]">{openTrackForMenu.mime_type || "Unknown"}</dd>
         </dl>
       </div>
 
@@ -1696,7 +1696,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                               setRenamingPlaylistId(null);
                               setPlaylistRenameValue("");
                             }}
-                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-[var(--app-text)]"
                             aria-label={`Open menu for ${playlist.name}`}
                             title="Playlist menu"
                           >
@@ -1761,7 +1761,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                   <p className="mb-2 truncate text-sm text-[var(--app-muted)]">
                     {displayName} - {visibleTracks.length} track{visibleTracks.length === 1 ? "" : "s"}
                   </p>
-                  <h1 className="truncate text-4xl font-semibold leading-tight text-white sm:text-5xl">
+                  <h1 className="truncate text-4xl font-semibold leading-tight text-[var(--app-text)] sm:text-5xl">
                     {activePlaylist?.name || "Playlist"}
                   </h1>
                 </div>
@@ -1791,7 +1791,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={loading || isUploading || !user || !activePlaylist}
-                  className="flex h-11 w-full items-center justify-center rounded-xl bg-[var(--app-glass)] text-sm font-semibold text-white backdrop-blur transition hover:bg-[var(--app-glass-strong)]"
+                  className="flex h-11 w-full items-center justify-center rounded-xl bg-[var(--app-glass)] text-sm font-semibold text-[var(--app-text)] backdrop-blur transition hover:bg-[var(--app-glass-strong)]"
                 >
                   {isUploading ? "Uploading..." : "+ Add tracks"}
                 </button>
@@ -1810,7 +1810,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                           setSelectedTrackIds([]);
                           setLastSelectedTrackId(null);
                         }}
-                        className="rounded-full border border-[var(--app-border)] px-3 py-1.5 text-xs text-[var(--app-muted)] hover:text-white"
+                        className="rounded-full border border-[var(--app-border)] px-3 py-1.5 text-xs text-[var(--app-muted)] hover:text-[var(--app-text)]"
                       >
                         Clear
                       </button>
@@ -1877,7 +1877,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                           type="button"
                           onClick={(event) => handleTrackClick(event, track.id, index)}
                           disabled={renamingTrackId === track.id}
-                        className={`text-right text-sm group-hover:text-white disabled:cursor-default ${
+                        className={`text-right text-sm group-hover:text-[var(--app-text)] disabled:cursor-default ${
                           isCurrentTrack ? "text-green-300" : "text-[var(--app-muted)]"
                         }`}
                       >
@@ -1916,7 +1916,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                           <button type="button" onClick={(event) => handleTrackClick(event, track.id, index)} className="block w-full text-left">
                             <span className="flex min-w-0 items-center gap-2">
                               <span className={`truncate text-sm font-semibold ${
-                                isCurrentTrack ? "text-green-300" : "text-white"
+                                isCurrentTrack ? "text-green-300" : "text-[var(--app-text)]"
                               }`}>{displayTitle}</span>
                               {track.isOfflineAvailable ? (
                                 <span className="shrink-0 rounded-full border border-green-900/60 px-2 py-0.5 text-[10px] font-medium text-green-300">
@@ -1935,7 +1935,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                             setRenamingPlaylistId(null);
                             setPlaylistRenameValue("");
                           }}
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-[var(--app-text)]"
                           aria-label={`Open menu for ${displayTitle}`}
                           title="Track menu"
                         >

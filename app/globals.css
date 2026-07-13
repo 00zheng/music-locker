@@ -13,6 +13,7 @@
   --app-accent-ink: #0b0b0b;
   --app-glass: rgba(255, 255, 255, 0.065);
   --app-glass-strong: rgba(255, 255, 255, 0.105);
+  --app-input-bg: rgba(10, 10, 10, 0.36);
   --app-range-track: rgba(255, 255, 255, 0.16);
   --app-gradient: linear-gradient(180deg, #151515 0%, #080808 100%);
   --card-radius: 14px;
@@ -38,6 +39,7 @@ html[data-theme="nocturne"] {
   --app-accent-ink: #0b0b0b;
   --app-glass: rgba(255, 255, 255, 0.065);
   --app-glass-strong: rgba(255, 255, 255, 0.105);
+  --app-input-bg: rgba(10, 10, 10, 0.36);
   --app-range-track: rgba(255, 255, 255, 0.16);
   --app-gradient: linear-gradient(180deg, #111111 0%, #0b0b0b 100%);
 }
@@ -53,6 +55,7 @@ html[data-theme="sunset"] {
   --app-accent-ink: #171717;
   --app-glass: rgba(255, 255, 255, 0.09);
   --app-glass-strong: rgba(255, 255, 255, 0.14);
+  --app-input-bg: rgba(10, 10, 10, 0.36);
   --app-range-track: rgba(255, 255, 255, 0.18);
   --app-gradient: linear-gradient(180deg, #242424 0%, #101010 100%);
 }
@@ -68,6 +71,7 @@ html[data-theme="ocean"] {
   --app-accent-ink: #061312;
   --app-glass: rgba(154, 217, 215, 0.09);
   --app-glass-strong: rgba(154, 217, 215, 0.14);
+  --app-input-bg: rgba(10, 10, 10, 0.36);
   --app-range-track: rgba(169, 230, 232, 0.18);
   --app-gradient: linear-gradient(180deg, #0d2223 0%, #061010 100%);
 }
@@ -83,6 +87,7 @@ html[data-theme="forest"] {
   --app-accent-ink: #081109;
   --app-glass: rgba(171, 216, 177, 0.09);
   --app-glass-strong: rgba(171, 216, 177, 0.14);
+  --app-input-bg: rgba(10, 10, 10, 0.36);
   --app-range-track: rgba(186, 231, 194, 0.18);
   --app-gradient: linear-gradient(180deg, #152319 0%, #080f09 100%);
 }
@@ -98,6 +103,7 @@ html[data-theme="light"] {
   --app-accent-ink: #ffffff;
   --app-glass: rgba(0, 0, 0, 0.055);
   --app-glass-strong: rgba(0, 0, 0, 0.095);
+  --app-input-bg: rgba(0, 0, 0, 0.055);
   --app-range-track: rgba(0, 0, 0, 0.14);
   --app-gradient: linear-gradient(180deg, #fbfbf8 0%, #ecece7 100%);
 }
@@ -178,9 +184,13 @@ body::-webkit-scrollbar,
 .app-input {
   border-radius: 10px;
   border: 1px solid var(--app-border);
-  background: rgba(10, 10, 10, 0.36);
+  background: var(--app-input-bg);
   color: var(--app-text);
   backdrop-filter: blur(14px);
+}
+
+.app-input::placeholder {
+  color: var(--app-muted);
 }
 
 .app-input:focus {
