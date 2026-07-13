@@ -172,7 +172,7 @@ export default function Navbar() {
     let realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
 
     async function loadNavbarData() {
-      if (isLoading || !navigator.onLine) {
+      if (isLoading || document.visibilityState !== "visible" || !navigator.onLine) {
         return;
       }
 

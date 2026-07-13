@@ -9,7 +9,6 @@ export default function RegisterServiceWorker() {
     }
 
     if (!("serviceWorker" in navigator)) {
-      console.log("Service workers are not supported in this browser.");
       return;
     }
 
@@ -49,8 +48,6 @@ export default function RegisterServiceWorker() {
         });
 
         void registration.update();
-
-        console.log("Service worker registered:", registration.scope);
       } catch (error) {
         console.error("Service worker registration failed:", error);
       }

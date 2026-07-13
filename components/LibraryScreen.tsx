@@ -444,7 +444,6 @@ export default function LibraryScreen({ playlistId }: Props) {
       createdAt: "",
       coverDataUrl: null,
       coverStoragePath: null,
-      folderId: null,
     }),
     [tracks]
   );
@@ -753,7 +752,12 @@ export default function LibraryScreen({ playlistId }: Props) {
     let isRefreshingPreferences = false;
 
     async function refreshPreferences() {
-      if (isRefreshingPreferences || isSavingPreferencesRef.current || !navigator.onLine) {
+      if (
+        isRefreshingPreferences ||
+        isSavingPreferencesRef.current ||
+        document.visibilityState !== "visible" ||
+        !navigator.onLine
+      ) {
         return;
       }
 
@@ -769,7 +773,11 @@ export default function LibraryScreen({ playlistId }: Props) {
     }
 
     function refreshLibrary() {
-      if (isSavingPreferencesRef.current || !navigator.onLine) {
+      if (
+        isSavingPreferencesRef.current ||
+        document.visibilityState !== "visible" ||
+        !navigator.onLine
+      ) {
         return;
       }
 
@@ -948,7 +956,6 @@ export default function LibraryScreen({ playlistId }: Props) {
         createdAt: new Date().toISOString(),
         coverDataUrl: null,
         coverStoragePath: null,
-        folderId: null,
       },
     ];
 

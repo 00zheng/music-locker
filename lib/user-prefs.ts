@@ -9,12 +9,6 @@ export type AppThemePreferences = {
   contentWidth: "compact" | "default" | "wide";
 };
 
-export type UserProfilePreferences = {
-  username: string;
-  bio: string;
-  avatarDataUrl: string | null;
-};
-
 export type TrackLocalMetadata = {
   title?: string;
   artist?: string;
@@ -35,35 +29,22 @@ export type Playlist = {
   createdAt: string;
   coverDataUrl?: string | null;
   coverStoragePath?: string | null;
-  folderId?: string | null;
-};
-
-export type PlaylistFolder = {
-  id: string;
-  name: string;
-  manualOrder: number;
-  createdAt: string;
 };
 
 export type SyncedUserPreferences = {
   version: 1;
   updatedAt: string;
-  profile: UserProfilePreferences;
   theme: AppThemePreferences;
   trackMetadata: TrackMetadataById;
   playlists: Playlist[];
-  playlistFolders: PlaylistFolder[];
   deletedPlaylistIds: string[];
-  deletedPlaylistFolderIds: string[];
 };
 
 export const USER_PREFERENCES_UPDATED_EVENT = "music-locker:user-preferences-updated";
 
-const PROFILE_PREFIX = "music-locker-profile:";
 const THEME_PREFIX = "music-locker-theme:";
 const TRACK_META_PREFIX = "music-locker-track-meta:";
 const PLAYLIST_PREFIX = "music-locker-playlists:";
-const PLAYLIST_FOLDER_PREFIX = "music-locker-playlist-folders:";
 const SYNC_PREFS_PREFIX = "music-locker-synced-prefs:";
 const SYNC_BUCKET = "music";
 const SYNC_EVENTS_TABLE = "sync_events";
@@ -73,12 +54,6 @@ const defaultTheme: AppThemePreferences = {
   roundedCards: true,
   compactMode: false,
   contentWidth: "default",
-};
-
-const defaultProfile: UserProfilePreferences = {
-  username: "",
-  bio: "",
-  avatarDataUrl: null,
 };
 
 function readJson<T>(key: string, fallback: T): T {
@@ -107,10 +82,6 @@ function writeJson<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
-function profileKey(userId: string) {
-  return `${PROFILE_PREFIX}${userId}`;
-}
-
 function themeKey(userId: string) {
   return `${THEME_PREFIX}${userId}`;
 }
@@ -123,76 +94,12 @@ function playlistKey(userId: string) {
   return `${PLAYLIST_PREFIX}${userId}`;
 }
 
-function playlistFolderKey(userId: string) {
-  return `${PLAYLIST_FOLDER_PREFIX}${userId}`;
-}
-
 function syncedLocalKey(userId: string) {
   return `${SYNC_PREFS_PREFIX}${userId}`;
 }
 
 function syncedPreferencesPath(userId: string) {
   return `${userId}/.music-locker/preferences.json`;
-}
-
-function normalizePreferences(value: Partial<SyncedUserPreferences>): SyncedUserPreferences {
-  const deletedPlaylistIds = uniqueValues(value.deletedPlaylistIds || []);
-  const deletedPlaylistFolderIds = uniqueValues(value.deletedPlaylistFolderIds || []);
-
-  return {
-    version: 1,
-    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : new Date().toISOString(),
-    profile: {
-      ...defaultProfile,
-      ...(value.profile || {}),
-    },
-    theme: {
-      ...defaultTheme,
-      ...(value.theme || {}),
-    },
-    trackMetadata: value.trackMetadata || {},
-    playlists: Array.isArray(value.playlists)
-      ? value.playlists
-          .filter((playlist) => !deletedPlaylistIds.includes(playlist.id))
-          .map((playlist, index) => ({
-            ...playlist,
-            manualOrder:
-              typeof playlist.manualOrder === "number" ? playlist.manualOrder : index,
-            trackIds: Array.isArray(playlist.trackIds) ? playlist.trackIds : [],
-            coverDataUrl: playlist.coverStoragePath ? null : playlist.coverDataUrl || null,
-            coverStoragePath: playlist.coverStoragePath || null,
-            folderId:
-              playlist.folderId && !deletedPlaylistFolderIds.includes(playlist.folderId)
-                ? playlist.folderId
-                : null,
-          }))
-      : [],
-    playlistFolders: Array.isArray(value.playlistFolders)
-      ? value.playlistFolders
-          .filter((folder) => !deletedPlaylistFolderIds.includes(folder.id))
-          .map((folder, index) => ({
-            ...folder,
-            manualOrder:
-              typeof folder.manualOrder === "number" ? folder.manualOrder : index,
-          }))
-      : [],
-    deletedPlaylistIds,
-    deletedPlaylistFolderIds,
-  };
-}
-
-function hasMeaningfulPreferences(preferences: SyncedUserPreferences) {
-  return (
-    Boolean(preferences.profile.username || preferences.profile.bio || preferences.profile.avatarDataUrl) ||
-    preferences.theme.themeId !== defaultTheme.themeId ||
-    preferences.theme.roundedCards !== defaultTheme.roundedCards ||
-    preferences.theme.compactMode !== defaultTheme.compactMode ||
-    Object.keys(preferences.trackMetadata).length > 0 ||
-    preferences.playlists.length > 0 ||
-    preferences.playlistFolders.length > 0 ||
-    preferences.deletedPlaylistIds.length > 0 ||
-    preferences.deletedPlaylistFolderIds.length > 0
-  );
 }
 
 function uniqueValues(values: string[]) {
@@ -203,6 +110,73 @@ function parseTimestamp(value: string) {
   const timestamp = Date.parse(value);
 
   return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function normalizeTrackMetadata(value: unknown): TrackMetadataById {
+  return isRecord(value) ? (value as TrackMetadataById) : {};
+}
+
+function normalizePlaylist(value: Partial<Playlist>, index: number): Playlist | null {
+  if (!value || typeof value.id !== "string") {
+    return null;
+  }
+
+  const coverStoragePath = typeof value.coverStoragePath === "string" ? value.coverStoragePath : null;
+
+  return {
+    id: value.id,
+    name: typeof value.name === "string" && value.name.trim() ? value.name : "untitled playlist",
+    trackIds: Array.isArray(value.trackIds) ? uniqueValues(value.trackIds) : [],
+    manualOrder: typeof value.manualOrder === "number" ? value.manualOrder : index,
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString(),
+    coverDataUrl: coverStoragePath ? null : value.coverDataUrl || null,
+    coverStoragePath,
+  };
+}
+
+function playlistMap(playlists: Playlist[]) {
+  return new Map(playlists.map((playlist) => [playlist.id, playlist]));
+}
+
+function normalizePreferences(value: Partial<SyncedUserPreferences>): SyncedUserPreferences {
+  const deletedPlaylistIds = uniqueValues(value.deletedPlaylistIds || []);
+  const playlists = Array.isArray(value.playlists)
+    ? value.playlists.flatMap((playlist, index): Playlist[] => {
+        const normalizedPlaylist = normalizePlaylist(playlist, index);
+
+        return normalizedPlaylist && !deletedPlaylistIds.includes(normalizedPlaylist.id)
+          ? [normalizedPlaylist]
+          : [];
+      })
+    : [];
+
+  return {
+    version: 1,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : new Date().toISOString(),
+    theme: {
+      ...defaultTheme,
+      ...(isRecord(value.theme) ? value.theme : {}),
+    },
+    trackMetadata: normalizeTrackMetadata(value.trackMetadata),
+    playlists,
+    deletedPlaylistIds,
+  };
+}
+
+function hasMeaningfulPreferences(preferences: SyncedUserPreferences) {
+  return (
+    preferences.theme.themeId !== defaultTheme.themeId ||
+    preferences.theme.roundedCards !== defaultTheme.roundedCards ||
+    preferences.theme.compactMode !== defaultTheme.compactMode ||
+    preferences.theme.contentWidth !== defaultTheme.contentWidth ||
+    Object.keys(preferences.trackMetadata).length > 0 ||
+    preferences.playlists.length > 0 ||
+    preferences.deletedPlaylistIds.length > 0
+  );
 }
 
 function isNewerLocalOnlyItem(
@@ -231,55 +205,34 @@ function mergePreferences(
     ...preferredPreferences.deletedPlaylistIds,
     ...fallbackPreferences.deletedPlaylistIds,
   ]);
-  const deletedPlaylistFolderIds = uniqueValues([
-    ...preferredPreferences.deletedPlaylistFolderIds,
-    ...fallbackPreferences.deletedPlaylistFolderIds,
-  ]);
+  const remotePlaylistsById = playlistMap(remotePreferences.playlists);
+  const localPlaylistsById = playlistMap(localPreferences.playlists);
+  const preferredPlaylistsById = playlistMap(preferredPreferences.playlists);
+  const fallbackPlaylistsById = playlistMap(fallbackPreferences.playlists);
   const remotePlaylistIds = remotePreferences.playlists.map((playlist) => playlist.id);
   const localOnlyPlaylistIds = localPreferences.playlists
     .filter(
       (playlist) =>
-        !remotePlaylistIds.includes(playlist.id) &&
+        !remotePlaylistsById.has(playlist.id) &&
         isNewerLocalOnlyItem(playlist, safeLocalTimestamp, safeRemoteTimestamp)
     )
     .map((playlist) => playlist.id);
-  const remoteFolderIds = remotePreferences.playlistFolders.map((folder) => folder.id);
-  const localOnlyFolderIds = localPreferences.playlistFolders
-    .filter(
-      (folder) =>
-        !remoteFolderIds.includes(folder.id) &&
-        isNewerLocalOnlyItem(folder, safeLocalTimestamp, safeRemoteTimestamp)
-    )
-    .map((folder) => folder.id);
   const playlistIds = uniqueValues([...remotePlaylistIds, ...localOnlyPlaylistIds]).filter(
     (playlistId) => !deletedPlaylistIds.includes(playlistId)
-  );
-  const folderIds = uniqueValues([...remoteFolderIds, ...localOnlyFolderIds]).filter(
-    (folderId) => !deletedPlaylistFolderIds.includes(folderId)
   );
 
   return normalizePreferences({
     ...preferredPreferences,
-    updatedAt: new Date(
-      Math.max(
-        safeLocalTimestamp,
-        safeRemoteTimestamp
-      )
-    ).toISOString(),
+    updatedAt: new Date(Math.max(safeLocalTimestamp, safeRemoteTimestamp)).toISOString(),
     trackMetadata: {
       ...fallbackPreferences.trackMetadata,
       ...preferredPreferences.trackMetadata,
     },
     playlists: playlistIds
       .flatMap((playlistId, index): Playlist[] => {
-        const remotePlaylist = remotePreferences.playlists.find((playlist) => playlist.id === playlistId);
-        const localPlaylist = localPreferences.playlists.find((playlist) => playlist.id === playlistId);
-        const preferredPlaylist =
-          preferredPreferences.playlists.find((playlist) => playlist.id === playlistId) ||
-          remotePlaylist;
-        const fallbackPlaylist =
-          fallbackPreferences.playlists.find((playlist) => playlist.id === playlistId) ||
-          localPlaylist;
+        const remotePlaylist = remotePlaylistsById.get(playlistId);
+        const preferredPlaylist = preferredPlaylistsById.get(playlistId) || remotePlaylist;
+        const fallbackPlaylist = fallbackPlaylistsById.get(playlistId) || localPlaylistsById.get(playlistId);
         const playlist = remotePlaylist || preferredPlaylist || fallbackPlaylist;
 
         if (!playlist) {
@@ -302,31 +255,10 @@ function mergePreferences(
             ? null
             : preferredPlaylist?.coverDataUrl || fallbackPlaylist?.coverDataUrl || null,
           coverStoragePath,
-          folderId:
-            playlist.folderId && !deletedPlaylistFolderIds.includes(playlist.folderId)
-              ? playlist.folderId
-              : null,
         }];
       })
       .sort((a, b) => a.manualOrder - b.manualOrder),
-    playlistFolders: folderIds
-      .map((folderId, index) => {
-        const folder =
-          remotePreferences.playlistFolders.find((currentFolder) => currentFolder.id === folderId) ||
-          preferredPreferences.playlistFolders.find((currentFolder) => currentFolder.id === folderId) ||
-          fallbackPreferences.playlistFolders.find((currentFolder) => currentFolder.id === folderId);
-
-        return folder
-          ? {
-              ...folder,
-              manualOrder: typeof folder.manualOrder === "number" ? folder.manualOrder : index,
-            }
-          : null;
-      })
-      .filter((folder): folder is PlaylistFolder => Boolean(folder))
-      .sort((a, b) => a.manualOrder - b.manualOrder),
     deletedPlaylistIds,
-    deletedPlaylistFolderIds,
   });
 }
 
@@ -342,69 +274,39 @@ function localUserPreferences(userId: string): SyncedUserPreferences {
 
   return normalizePreferences({
     updatedAt: new Date().toISOString(),
-    profile: getUserProfilePreferences(userId),
     theme: getAppThemePreferences(userId),
     trackMetadata: getTrackMetadata(userId),
     playlists: getPlaylists(userId),
-    playlistFolders: getPlaylistFolders(userId),
   });
 }
 
 function writeLocalUserPreferences(userId: string, preferences: SyncedUserPreferences) {
   writeJson(syncedLocalKey(userId), preferences);
-  setUserProfilePreferences(userId, preferences.profile);
   setAppThemePreferences(userId, preferences.theme);
   setTrackMetadata(userId, preferences.trackMetadata);
   setPlaylists(userId, preferences.playlists);
-  setPlaylistFolders(userId, preferences.playlistFolders);
 }
 
 function mergePlaylistUpdates(
   basePlaylists: Playlist[],
   updatedPlaylists: Playlist[],
-  deletedPlaylistIds: string[],
-  deletedPlaylistFolderIds: string[]
+  deletedPlaylistIds: string[]
 ) {
+  const playlistsById = new Map(basePlaylists.map((playlist) => [playlist.id, playlist]));
+
+  updatedPlaylists.forEach((playlist) => {
+    playlistsById.set(playlist.id, playlist);
+  });
+
   return uniqueValues([
     ...basePlaylists.map((playlist) => playlist.id),
     ...updatedPlaylists.map((playlist) => playlist.id),
   ])
     .filter((playlistId) => !deletedPlaylistIds.includes(playlistId))
-    .flatMap((playlistId): Playlist[] => {
-      const playlist =
-        updatedPlaylists.find((currentPlaylist) => currentPlaylist.id === playlistId) ||
-        basePlaylists.find((currentPlaylist) => currentPlaylist.id === playlistId);
+    .flatMap((playlistId, index): Playlist[] => {
+      const normalizedPlaylist = normalizePlaylist(playlistsById.get(playlistId) || {}, index);
 
-      if (!playlist) {
-        return [];
-      }
-
-      return [{
-        ...playlist,
-        folderId:
-          playlist.folderId && !deletedPlaylistFolderIds.includes(playlist.folderId)
-            ? playlist.folderId
-            : null,
-      }];
-    });
-}
-
-function mergePlaylistFolderUpdates(
-  baseFolders: PlaylistFolder[],
-  updatedFolders: PlaylistFolder[],
-  deletedPlaylistFolderIds: string[]
-) {
-  return uniqueValues([
-    ...baseFolders.map((folder) => folder.id),
-    ...updatedFolders.map((folder) => folder.id),
-  ])
-    .filter((folderId) => !deletedPlaylistFolderIds.includes(folderId))
-    .flatMap((folderId): PlaylistFolder[] => {
-      const folder =
-        updatedFolders.find((currentFolder) => currentFolder.id === folderId) ||
-        baseFolders.find((currentFolder) => currentFolder.id === folderId);
-
-      return folder ? [folder] : [];
+      return normalizedPlaylist ? [normalizedPlaylist] : [];
     });
 }
 
@@ -425,20 +327,6 @@ async function downloadSyncedUserPreferences(
   } catch {
     return null;
   }
-}
-
-export function getUserProfilePreferences(userId: string) {
-  return {
-    ...defaultProfile,
-    ...readJson<UserProfilePreferences>(profileKey(userId), defaultProfile),
-  };
-}
-
-export function setUserProfilePreferences(
-  userId: string,
-  value: UserProfilePreferences
-) {
-  writeJson(profileKey(userId), value);
 }
 
 export function getAppThemePreferences(userId: string) {
@@ -463,33 +351,22 @@ export function setTrackMetadata(userId: string, value: TrackMetadataById) {
 export function getPlaylists(userId: string) {
   const playlists = readJson<Playlist[]>(playlistKey(userId), []);
 
-  return playlists.map((playlist, index) => ({
-    ...playlist,
-    manualOrder:
-      typeof playlist.manualOrder === "number" ? playlist.manualOrder : index,
-    trackIds: Array.isArray(playlist.trackIds) ? playlist.trackIds : [],
-    coverDataUrl: playlist.coverStoragePath ? null : playlist.coverDataUrl || null,
-    coverStoragePath: playlist.coverStoragePath || null,
-    folderId: playlist.folderId || null,
-  }));
+  return playlists.flatMap((playlist, index): Playlist[] => {
+    const normalizedPlaylist = normalizePlaylist(playlist, index);
+
+    return normalizedPlaylist ? [normalizedPlaylist] : [];
+  });
 }
 
 export function setPlaylists(userId: string, playlists: Playlist[]) {
-  writeJson(playlistKey(userId), playlists);
-}
+  writeJson(
+    playlistKey(userId),
+    playlists.flatMap((playlist, index): Playlist[] => {
+      const normalizedPlaylist = normalizePlaylist(playlist, index);
 
-export function getPlaylistFolders(userId: string) {
-  const folders = readJson<PlaylistFolder[]>(playlistFolderKey(userId), []);
-
-  return folders.map((folder, index) => ({
-    ...folder,
-    manualOrder:
-      typeof folder.manualOrder === "number" ? folder.manualOrder : index,
-  }));
-}
-
-export function setPlaylistFolders(userId: string, folders: PlaylistFolder[]) {
-  writeJson(playlistFolderKey(userId), folders);
+      return normalizedPlaylist ? [normalizedPlaylist] : [];
+    })
+  );
 }
 
 export async function loadSyncedUserPreferences(
@@ -550,10 +427,6 @@ export async function saveSyncedUserPreferences(
       ...currentPreferences.deletedPlaylistIds,
       ...(value.deletedPlaylistIds || []),
     ]),
-    deletedPlaylistFolderIds: uniqueValues([
-      ...currentPreferences.deletedPlaylistFolderIds,
-      ...(value.deletedPlaylistFolderIds || []),
-    ]),
   });
 
   writeLocalUserPreferences(userId, optimisticPreferences);
@@ -566,33 +439,15 @@ export async function saveSyncedUserPreferences(
     ...basePreferences.deletedPlaylistIds,
     ...(value.deletedPlaylistIds || []),
   ]);
-  const deletedPlaylistFolderIds = uniqueValues([
-    ...basePreferences.deletedPlaylistFolderIds,
-    ...(value.deletedPlaylistFolderIds || []),
-  ]);
   const playlists = Array.isArray(value.playlists)
-    ? mergePlaylistUpdates(
-        basePreferences.playlists,
-        value.playlists,
-        deletedPlaylistIds,
-        deletedPlaylistFolderIds
-      )
+    ? mergePlaylistUpdates(basePreferences.playlists, value.playlists, deletedPlaylistIds)
     : basePreferences.playlists;
-  const playlistFolders = Array.isArray(value.playlistFolders)
-    ? mergePlaylistFolderUpdates(
-        basePreferences.playlistFolders,
-        value.playlistFolders,
-        deletedPlaylistFolderIds
-      )
-    : basePreferences.playlistFolders;
   const preferences = normalizePreferences({
     ...basePreferences,
     ...value,
     playlists,
-    playlistFolders,
     updatedAt: new Date().toISOString(),
     deletedPlaylistIds,
-    deletedPlaylistFolderIds,
   });
   const payload = JSON.stringify(preferences);
 
