@@ -1659,7 +1659,7 @@ export default function LibraryScreen() {
     return (
       <>
         <Navbar />
-        <main className="app-shell min-h-screen px-6 py-8 text-[var(--app-text)]">
+        <main className="app-shell min-h-screen px-6 py-8 pb-[calc(12rem+env(safe-area-inset-bottom))] text-[var(--app-text)]">
           <p className="text-sm text-[var(--app-muted)]">Loading...</p>
         </main>
       </>
@@ -1775,7 +1775,7 @@ export default function LibraryScreen() {
   return (
     <>
       <Navbar />
-      <main className="app-shell min-h-screen px-5 py-6 pb-32 text-[var(--app-text)] sm:px-8">
+      <main className="app-shell min-h-screen px-5 py-6 pb-[calc(12rem+env(safe-area-inset-bottom))] text-[var(--app-text)] sm:px-8 sm:pb-36">
         <div className="app-content">
           <div className="mb-8 flex items-center justify-end gap-4">
             <p className="text-sm text-[var(--app-muted)]">{displayName}</p>
@@ -1917,7 +1917,7 @@ export default function LibraryScreen() {
                       className={`group relative grid grid-cols-[2.5rem_1fr_auto] items-center gap-3 rounded-xl px-2 py-3 ${
                         draggedTrackId === track.id ? "opacity-45" : ""
                       } ${
-                        isCurrentTrack ? "bg-green-500/10 text-green-300" : ""
+                        isCurrentTrack ? "bg-[var(--app-playing-bg)] text-[var(--app-playing-text)]" : ""
                       } ${
                         isSelected ? "bg-white/[0.08]" : ""
                       } ${
@@ -1928,8 +1928,8 @@ export default function LibraryScreen() {
                           type="button"
                           onClick={(event) => handleTrackClick(event, track.id, index)}
                           disabled={renamingTrackId === track.id}
-                        className={`text-right text-sm group-hover:text-[var(--app-text)] disabled:cursor-default ${
-                          isCurrentTrack ? "text-green-300" : "text-[var(--app-muted)]"
+                        className={`text-right text-sm disabled:cursor-default ${
+                          isCurrentTrack ? "text-[var(--app-playing-text)] group-hover:text-[var(--app-playing-text)]" : "text-[var(--app-muted)] group-hover:text-[var(--app-text)]"
                         }`}
                       >
                         {index + 1}
@@ -1967,7 +1967,7 @@ export default function LibraryScreen() {
                           <button type="button" onClick={(event) => handleTrackClick(event, track.id, index)} className="block w-full text-left">
                             <span className="flex min-w-0 items-center gap-2">
                               <span className={`truncate text-sm font-semibold ${
-                                isCurrentTrack ? "text-green-300" : "text-[var(--app-text)]"
+                                isCurrentTrack ? "text-[var(--app-playing-text)]" : "text-[var(--app-text)]"
                               }`}>{displayTitle}</span>
                               {track.isOfflineAvailable ? (
                                 <span className="shrink-0 rounded-full border border-green-900/60 px-2 py-0.5 text-[10px] font-medium text-green-300">
