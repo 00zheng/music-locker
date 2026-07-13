@@ -1521,9 +1521,9 @@ export default function PlayerBridge() {
         aria-label={isShuffleOn ? "Turn shuffle off" : "Shuffle"}
         aria-pressed={isShuffleOn}
         title={isShuffleOn ? "Turn shuffle off" : "Shuffle"}
-        className={`flex items-center justify-center rounded-full transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+        className={`flex items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
           isCompact ? "h-11 w-11" : "h-12 w-12"
-        } ${isShuffleOn ? "bg-white text-black" : "text-[var(--app-muted)]"}`}
+        } ${isShuffleOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-muted)]"}`}
       >
         <PlayerIcon name="shuffle" className={isCompact ? "h-4 w-4" : "h-5 w-5"} />
       </button>
@@ -1534,7 +1534,7 @@ export default function PlayerBridge() {
         disabled={!canPlayPrevious}
         aria-label="Back"
         title="Back"
-        className={`flex items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+        className={`flex items-center justify-center rounded-full text-[var(--app-text)] transition hover:bg-[var(--app-glass)] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
           isCompact ? "h-12 w-12" : "h-14 w-14"
         }`}
       >
@@ -1546,7 +1546,7 @@ export default function PlayerBridge() {
         onClick={() => setIsPlaying((current) => !current)}
         aria-label={isPlaying ? "Pause" : "Play"}
         title={isPlaying ? "Pause" : "Play"}
-        className={`flex items-center justify-center rounded-full bg-white text-black shadow-[0_18px_50px_rgba(0,0,0,0.35)] transition active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+        className={`flex items-center justify-center rounded-full bg-[var(--app-accent)] text-[var(--app-accent-ink)] shadow-[0_18px_50px_rgba(0,0,0,0.25)] transition active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
           isCompact ? "h-16 w-16" : "h-20 w-20"
         }`}
       >
@@ -1559,7 +1559,7 @@ export default function PlayerBridge() {
         disabled={!canPlayNext}
         aria-label="Skip"
         title="Skip"
-        className={`flex items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+        className={`flex items-center justify-center rounded-full text-[var(--app-text)] transition hover:bg-[var(--app-glass)] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
           isCompact ? "h-12 w-12" : "h-14 w-14"
         }`}
       >
@@ -1572,9 +1572,9 @@ export default function PlayerBridge() {
         aria-label={repeatModeTitle(repeatMode)}
         aria-pressed={isRepeatAllOn || isRepeatOneOn}
         title={repeatModeTitle(repeatMode)}
-        className={`flex items-center justify-center rounded-full transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+        className={`flex items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
           isCompact ? "h-11 w-11" : "h-12 w-12"
-        } ${isRepeatAllOn || isRepeatOneOn ? "bg-white text-black" : "text-[var(--app-muted)]"}`}
+        } ${isRepeatAllOn || isRepeatOneOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-muted)]"}`}
       >
         <PlayerIcon name={repeatModeIcon(repeatMode)} className={isCompact ? "h-4 w-4" : "h-5 w-5"} />
       </button>
@@ -1592,8 +1592,8 @@ export default function PlayerBridge() {
         aria-label="Queue"
         aria-pressed={isQueueOpen}
         title="Queue"
-        className={`flex h-11 w-11 items-center justify-center rounded-full transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
-          isQueueOpen ? "bg-white text-black" : "text-[var(--app-muted)]"
+        className={`flex h-11 w-11 items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+          isQueueOpen ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-muted)]"
         }`}
       >
         <PlayerIcon name="queue" className="h-5 w-5" />
@@ -1603,14 +1603,14 @@ export default function PlayerBridge() {
 
   const renderQueuePanel = (className: string, listClassName = "max-h-56") => (
     <div className={className} aria-label="Playback queue">
-      <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
+      <div className="flex items-center justify-between border-b border-[var(--app-border)] px-5 py-4">
         <div className="min-w-0">
-          <p className="text-xl font-semibold text-white">Queue</p>
+          <p className="text-xl font-semibold text-[var(--app-text)]">Queue</p>
           <p className="mt-0.5 text-xs text-[var(--app-muted)]">
             {displayedQueueItems.length} track{displayedQueueItems.length === 1 ? "" : "s"} in queue
           </p>
         </div>
-        <span className="rounded-full border border-white/[0.1] bg-white/[0.06] px-2.5 py-1 font-mono text-xs text-white">
+        <span className="rounded-full border border-[var(--app-border)] bg-[var(--app-glass)] px-2.5 py-1 font-mono text-xs text-[var(--app-text)]">
           {track ? 1 : 0}/{displayedQueueItems.length}
         </span>
       </div>
@@ -1647,8 +1647,8 @@ export default function PlayerBridge() {
               onTouchEnd={endQueueTouchLongPress}
               onTouchCancel={endQueueTouchLongPress}
               className={`relative flex min-h-16 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-[background-color,box-shadow,opacity,transform] duration-200 ease-out ${
-                item.source === "current" ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" : "text-[var(--app-muted)] hover:bg-white/[0.08]"
-              } ${isDraggedItem ? "bg-white/[0.08] opacity-30 ring-1 ring-white/[0.08]" : "opacity-100"}`}
+                item.source === "current" ? "bg-[var(--app-glass-strong)] text-[var(--app-text)] ring-1 ring-[var(--app-border)]" : "text-[var(--app-muted)] hover:bg-[var(--app-glass)]"
+              } ${isDraggedItem ? "bg-[var(--app-glass)] opacity-30 ring-1 ring-[var(--app-border)]" : "opacity-100"}`}
             >
               <button
                 type="button"
@@ -1662,7 +1662,7 @@ export default function PlayerBridge() {
                 }}
                 className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
               >
-                <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/[0.06] font-mono text-xs text-white shadow-[0_10px_30px_rgba(0,0,0,0.22)]">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[var(--app-glass)] font-mono text-xs text-[var(--app-text)] shadow-[0_10px_30px_rgba(0,0,0,0.16)]">
                   {item.track.coverDataUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img src={item.track.coverDataUrl} alt="" className="h-full w-full object-cover" />
@@ -1671,13 +1671,13 @@ export default function PlayerBridge() {
                   )}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-base font-semibold text-white">{item.track.title}</span>
+                  <span className="block truncate text-base font-semibold text-[var(--app-text)]">{item.track.title}</span>
                   <span className="block truncate text-xs text-[var(--app-muted)]">{item.track.artist}</span>
                 </span>
               </button>
 
               {item.source === "current" ? (
-                <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-black">
+                <span className="shrink-0 rounded-full bg-[var(--app-accent)] px-2 py-0.5 text-[10px] font-semibold uppercase text-[var(--app-accent-ink)]">
                   Now
                 </span>
               ) : null}
@@ -1700,7 +1700,7 @@ export default function PlayerBridge() {
                 onTouchEnd={(event) => event.stopPropagation()}
                 onTouchCancel={(event) => event.stopPropagation()}
                 onClick={(event) => toggleQueueMenu(item, event)}
-                className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+                className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-[var(--app-muted)] transition hover:bg-[var(--app-glass)] hover:text-[var(--app-text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
                 aria-label={`Open queue menu for ${item.track.title}`}
                 aria-expanded={openQueueMenuKey === item.key}
                 title="Queue menu"
@@ -1718,7 +1718,7 @@ export default function PlayerBridge() {
           <>
             {queueDragState ? (
               <div
-                className="pointer-events-none fixed z-[1000] flex min-h-16 items-center gap-3 rounded-2xl bg-[rgba(54,54,54,0.98)] px-3 py-2.5 text-left text-white opacity-100 shadow-[0_26px_70px_rgba(0,0,0,0.62)] ring-1 ring-white/[0.14] backdrop-blur-xl"
+                className="pointer-events-none fixed z-[1000] flex min-h-16 items-center gap-3 rounded-2xl bg-[var(--app-bg)] px-3 py-2.5 text-left text-[var(--app-text)] opacity-100 shadow-[0_26px_70px_rgba(0,0,0,0.28)] ring-1 ring-[var(--app-border)]"
                 style={{
                   left: queueDragState.rowLeft,
                   top: queueDragState.currentY - queueDragState.offsetY,
@@ -1726,7 +1726,7 @@ export default function PlayerBridge() {
                   transform: "scale(1.035)",
                 }}
               >
-                <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/[0.08] font-mono text-xs text-white shadow-[0_10px_30px_rgba(0,0,0,0.24)]">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[var(--app-glass)] font-mono text-xs text-[var(--app-text)] shadow-[0_10px_30px_rgba(0,0,0,0.18)]">
                   {queueDragState.track.coverDataUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img src={queueDragState.track.coverDataUrl} alt="" className="h-full w-full object-cover" />
@@ -1735,10 +1735,10 @@ export default function PlayerBridge() {
                   )}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-base font-semibold text-white">{queueDragState.track.title}</span>
+                  <span className="block truncate text-base font-semibold text-[var(--app-text)]">{queueDragState.track.title}</span>
                   <span className="block truncate text-xs text-[var(--app-muted)]">{queueDragState.track.artist}</span>
                 </span>
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-white/60">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center gap-1 rounded-full text-[var(--app-muted)]">
                   <span className="h-1 w-1 rounded-full bg-current" />
                   <span className="h-1 w-1 rounded-full bg-current" />
                   <span className="h-1 w-1 rounded-full bg-current" />
@@ -1748,7 +1748,7 @@ export default function PlayerBridge() {
             {openQueueMenuItem && queueMenuPosition ? (
               <div
                 data-queue-menu-root
-                className="fixed z-[1010] w-[min(17.5rem,calc(100vw-1.5rem))] overflow-hidden rounded-[2rem] border border-white/[0.08] bg-[rgba(12,12,12,0.98)] p-3 text-lg font-semibold text-white shadow-[0_28px_70px_rgba(0,0,0,0.66)] backdrop-blur-2xl"
+                className="fixed z-[1010] w-[min(17.5rem,calc(100vw-1.5rem))] overflow-hidden rounded-[2rem] border border-[var(--app-border)] bg-[var(--app-bg)] p-3 text-lg font-semibold text-[var(--app-text)] shadow-[0_28px_70px_rgba(0,0,0,0.28)]"
                 style={{
                   top: queueMenuPosition.top,
                   left: queueMenuPosition.left,
@@ -1757,7 +1757,7 @@ export default function PlayerBridge() {
                 <button
                   type="button"
                   onClick={() => goToQueuedTrackProject(openQueueMenuItem.track)}
-                  className="flex min-h-16 w-full items-center gap-4 rounded-3xl px-4 text-left transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+                  className="flex min-h-16 w-full items-center gap-4 rounded-3xl px-4 text-left transition hover:bg-[var(--app-glass)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
                 >
                   <PlayerIcon name="external" className="h-8 w-8 shrink-0" />
                   <span>Go to project</span>
@@ -1813,14 +1813,14 @@ export default function PlayerBridge() {
       {track ? (
         <>
           {isExpandedPlayerOpen ? (
-            <div className="fixed inset-0 z-[300] bg-[rgba(8,8,8,0.94)] px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] text-white backdrop-blur-2xl sm:hidden">
+            <div className="fixed inset-0 z-[300] bg-[var(--app-bg)] px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] text-[var(--app-text)] sm:hidden">
               <div className="mx-auto flex h-full max-w-md flex-col">
                 <div className="flex h-14 items-center justify-between">
-                  <div className="h-1.5 w-12 rounded-full bg-white/20" aria-hidden="true" />
+                  <div className="h-1.5 w-12 rounded-full bg-[var(--app-glass-strong)]" aria-hidden="true" />
                   <button
                     type="button"
                     onClick={collapseExpandedPlayer}
-                    className="flex h-12 w-12 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+                    className="flex h-12 w-12 items-center justify-center rounded-full text-[var(--app-text)] transition hover:bg-[var(--app-glass)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
                     aria-label="Collapse player"
                     title="Collapse"
                   >
@@ -1833,7 +1833,7 @@ export default function PlayerBridge() {
                 }`}>
                   {isQueueOpen ? (
                     <>
-                      <div className="rounded-[28px] border border-white/[0.08] bg-[rgba(32,32,32,0.78)] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.42)] backdrop-blur-xl">
+                      <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-bg-soft)] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
                         <div className="flex min-w-0 items-center gap-3">
                           {track.coverDataUrl ? (
                             /* eslint-disable-next-line @next/next/no-img-element */
@@ -1846,7 +1846,7 @@ export default function PlayerBridge() {
                             <div className="h-16 w-16 shrink-0 rounded-2xl border border-[var(--app-border)] bg-[var(--app-glass)]" />
                           )}
                           <div className="min-w-0">
-                            <p className="truncate text-xl font-semibold leading-tight text-white">{track.title}</p>
+                            <p className="truncate text-xl font-semibold leading-tight text-[var(--app-text)]">{track.title}</p>
                             <p className="mt-1 truncate text-sm text-[var(--app-muted)]">{track.artist}</p>
                           </div>
                         </div>
@@ -1877,7 +1877,7 @@ export default function PlayerBridge() {
                       </div>
 
                       {renderQueuePanel(
-                        "min-h-0 flex-1 overflow-hidden rounded-[28px] border border-white/[0.08] bg-[rgba(32,32,32,0.76)] shadow-[0_18px_60px_rgba(0,0,0,0.42)] backdrop-blur-xl",
+                        "min-h-0 flex-1 overflow-hidden rounded-[28px] border border-[var(--app-border)] bg-[var(--app-bg-soft)] shadow-[0_18px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl",
                         "h-full max-h-none"
                       )}
                     </>
@@ -1897,7 +1897,7 @@ export default function PlayerBridge() {
                       </div>
 
                       <div className="min-w-0 text-center">
-                        <p className="truncate text-2xl font-semibold leading-tight text-white">{track.title}</p>
+                        <p className="truncate text-2xl font-semibold leading-tight text-[var(--app-text)]">{track.title}</p>
                         <p className="mt-2 truncate text-base text-[var(--app-muted)]">{track.artist}</p>
                       </div>
 
@@ -1936,14 +1936,14 @@ export default function PlayerBridge() {
               ? (
                 <div className="hidden sm:block">
                   {renderQueuePanel(
-                    "mx-auto mb-3 max-h-80 max-w-4xl overflow-hidden rounded-3xl border border-white/[0.08] bg-[rgba(27,27,27,0.74)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl"
+                    "mx-auto mb-3 max-h-80 max-w-4xl overflow-hidden rounded-3xl border border-[var(--app-border)] bg-[var(--app-bg-soft)] shadow-[0_18px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl"
                   )}
                 </div>
               )
               : null}
 
             <div
-              className="mx-auto flex max-w-5xl flex-wrap items-center gap-2 rounded-2xl border border-white/[0.08] bg-[rgba(36,36,36,0.78)] px-2 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:flex-nowrap sm:gap-3 sm:rounded-full sm:px-3"
+              className="mx-auto flex max-w-5xl flex-wrap items-center gap-2 rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-soft)] px-2 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl sm:flex-nowrap sm:gap-3 sm:rounded-full sm:px-3"
             >
               <button
                 type="button"
@@ -1983,7 +1983,7 @@ export default function PlayerBridge() {
                 aria-label="Song position"
               />
 
-              <div className="hidden items-center gap-2 font-mono text-xs text-white sm:flex">
+              <div className="hidden items-center gap-2 font-mono text-xs text-[var(--app-text)] sm:flex">
                 <span>{formatTime(currentTime)}</span>
                 <span>/</span>
                 <span>{formatTime(duration)}</span>
@@ -1996,7 +1996,7 @@ export default function PlayerBridge() {
                   disabled={!canPlayPrevious}
                   aria-label="Back"
                   title="Back"
-                  className="flex h-12 w-12 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 sm:h-10 sm:w-10"
+                  className="flex h-12 w-12 items-center justify-center rounded-full text-[var(--app-text)] transition hover:bg-[var(--app-glass)] disabled:cursor-not-allowed disabled:opacity-35 sm:h-10 sm:w-10"
                 >
                   <PlayerIcon name="previous" className="h-5 w-5" />
                 </button>
@@ -2006,7 +2006,7 @@ export default function PlayerBridge() {
                   onClick={() => setIsPlaying((current) => !current)}
                   aria-label={isPlaying ? "Pause" : "Play"}
                   title={isPlaying ? "Pause" : "Play"}
-                  className="flex h-[52px] min-h-[52px] w-[52px] min-w-[52px] items-center justify-center rounded-full bg-white text-black shadow-[0_10px_30px_rgba(0,0,0,0.28)] sm:h-10 sm:min-h-10 sm:w-10 sm:min-w-10"
+                  className="flex h-[52px] min-h-[52px] w-[52px] min-w-[52px] items-center justify-center rounded-full bg-[var(--app-accent)] text-[var(--app-accent-ink)] shadow-[0_10px_30px_rgba(0,0,0,0.22)] sm:h-10 sm:min-h-10 sm:w-10 sm:min-w-10"
                 >
                   <PlayerIcon name={isPlaying ? "pause" : "play"} className="h-5 w-5 sm:h-4 sm:w-4" />
                 </button>
@@ -2017,7 +2017,7 @@ export default function PlayerBridge() {
                   disabled={!canPlayNext}
                   aria-label="Skip"
                   title="Skip"
-                  className="flex h-12 w-12 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35 sm:h-10 sm:w-10"
+                  className="flex h-12 w-12 items-center justify-center rounded-full text-[var(--app-text)] transition hover:bg-[var(--app-glass)] disabled:cursor-not-allowed disabled:opacity-35 sm:h-10 sm:w-10"
                 >
                   <PlayerIcon name="next" className="h-5 w-5" />
                 </button>
@@ -2028,8 +2028,8 @@ export default function PlayerBridge() {
                   aria-label={isShuffleOn ? "Turn shuffle off" : "Shuffle"}
                   aria-pressed={isShuffleOn}
                   title={isShuffleOn ? "Turn shuffle off" : "Shuffle"}
-                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/[0.08] sm:flex ${
-                    isShuffleOn ? "bg-white text-black" : "text-[var(--app-muted)]"
+                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] sm:flex ${
+                    isShuffleOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-muted)]"
                   }`}
                 >
                   <PlayerIcon name="shuffle" />
@@ -2041,8 +2041,8 @@ export default function PlayerBridge() {
                   aria-label={repeatModeTitle(repeatMode)}
                   aria-pressed={isRepeatAllOn || isRepeatOneOn}
                   title={repeatModeTitle(repeatMode)}
-                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/[0.08] sm:flex ${
-                    isRepeatAllOn || isRepeatOneOn ? "bg-white text-black" : "text-[var(--app-muted)]"
+                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] sm:flex ${
+                    isRepeatAllOn || isRepeatOneOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-muted)]"
                   }`}
                 >
                   <PlayerIcon name={repeatModeIcon(repeatMode)} />
@@ -2057,8 +2057,8 @@ export default function PlayerBridge() {
                   aria-label="Queue"
                   aria-pressed={isQueueOpen}
                   title="Queue"
-                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/[0.08] sm:flex ${
-                    isQueueOpen ? "bg-white text-black" : "text-white"
+                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] sm:flex ${
+                    isQueueOpen ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-text)]"
                   }`}
                 >
                   <PlayerIcon name="queue" />
@@ -2067,13 +2067,13 @@ export default function PlayerBridge() {
                 <div className="group relative hidden sm:block">
                   <button
                     type="button"
-                    className="flex h-10 w-10 items-center justify-center rounded-full text-white transition hover:bg-white/[0.08] focus:bg-white/[0.08]"
+                    className="flex h-10 w-10 items-center justify-center rounded-full text-[var(--app-text)] transition hover:bg-[var(--app-glass)] focus:bg-[var(--app-glass)]"
                     aria-label="Volume"
                     title="Volume"
                   >
                     <PlayerIcon name="volume" />
                   </button>
-                  <div className="pointer-events-none absolute bottom-11 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-full border border-white/[0.08] bg-[rgba(27,27,27,0.78)] px-3 py-4 opacity-0 shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl transition group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+                  <div className="pointer-events-none absolute bottom-11 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-full border border-[var(--app-border)] bg-[var(--app-bg-soft)] px-3 py-4 opacity-0 shadow-[0_18px_50px_rgba(0,0,0,0.22)] backdrop-blur-xl transition group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
                     <input
                       type="range"
                       min={0}
@@ -2081,7 +2081,7 @@ export default function PlayerBridge() {
                       step={0.01}
                       value={volume}
                       onChange={(event) => setVolume(Number(event.currentTarget.value))}
-                      className="h-24 w-2 accent-white [direction:rtl] [writing-mode:vertical-lr]"
+                      className="h-24 w-2 accent-[var(--app-accent)] [direction:rtl] [writing-mode:vertical-lr]"
                       aria-label="Volume"
                     />
                     <span className="text-[10px] text-[var(--app-muted)]">{Math.round(volume * 100)}</span>

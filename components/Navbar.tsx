@@ -11,7 +11,6 @@ import {
   type TrackMetadataById,
 } from "@/lib/user-prefs";
 import { dispatchPlayQueue } from "@/components/PlayerBridge";
-import LogoutButton from "./LogoutButton";
 
 const NAVBAR_REFRESH_INTERVAL_MS = 15000;
 const PLAYLIST_COVER_SIGNED_URL_SECONDS = 60 * 60;
@@ -164,7 +163,6 @@ export default function Navbar() {
   const [playlistCoverUrlsById, setPlaylistCoverUrlsById] = useState<PlaylistCoverUrlsById>({});
   const [trackMetadataById, setTrackMetadataById] = useState<TrackMetadataById>({});
   const [tracks, setTracks] = useState<SearchTrack[]>([]);
-  const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -387,7 +385,7 @@ export default function Navbar() {
 
   return (
     <>
-    <nav className="relative z-[100] w-full border-b border-[var(--app-border)] bg-[rgba(12,12,12,0.52)] backdrop-blur-xl">
+    <nav className="relative z-[100] w-full border-b border-[var(--app-border)] bg-[var(--app-bg-soft)] backdrop-blur-xl">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-2">
           <Link href="/library" className="truncate text-lg font-semibold tracking-tight text-[var(--app-text)]">
@@ -398,8 +396,8 @@ export default function Navbar() {
         <div className="relative flex items-center gap-2">
           <Link
             href="/library"
-            className={`flex h-11 w-11 items-center justify-center rounded-full text-white transition hover:bg-white/[0.12] active:text-white ${
-              pathname.startsWith("/library") ? "bg-white/[0.16]" : "bg-white/[0.08]"
+            className={`flex h-11 w-11 items-center justify-center rounded-full text-[var(--app-text)] transition hover:bg-[var(--app-glass-strong)] active:text-[var(--app-text)] ${
+              pathname.startsWith("/library") ? "bg-[var(--app-glass-strong)]" : "bg-[var(--app-glass)]"
             }`}
             aria-label="Library"
             title="Library"
@@ -407,96 +405,56 @@ export default function Navbar() {
             <NavIcon name="library" />
           </Link>
 
-          <button
-            type="button"
-            onClick={() => {
-              setIsSettingsMenuOpen((current) => !current);
-              setIsSearchOpen(false);
-            }}
-            className={`flex h-11 w-11 items-center justify-center rounded-full text-white transition hover:bg-white/[0.12] active:text-white ${
-              pathname === "/settings" ? "bg-white/[0.16]" : "bg-white/[0.08]"
+          <Link
+            href="/settings"
+            className={`flex h-11 w-11 items-center justify-center rounded-full text-[var(--app-text)] transition hover:bg-[var(--app-glass-strong)] active:text-[var(--app-text)] ${
+              pathname === "/settings" ? "bg-[var(--app-glass-strong)]" : "bg-[var(--app-glass)]"
             }`}
-            aria-label="Settings menu"
+            aria-label="Settings"
             title="Settings"
           >
             <NavIcon name="settings" />
-          </button>
+          </Link>
 
           <button
             type="button"
             onClick={() => {
               setIsSearchOpen(true);
-              setIsSettingsMenuOpen(false);
             }}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.08] text-white transition hover:bg-white/[0.12] active:text-white"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--app-glass)] text-[var(--app-text)] transition hover:bg-[var(--app-glass-strong)] active:text-[var(--app-text)]"
             aria-label="Universal search"
             title="Search"
           >
             <NavIcon name="search" />
           </button>
 
-          {isSettingsMenuOpen ? (
-              <div className="absolute right-0 top-14 z-[110] w-72 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
-              <div className="border-b border-white/[0.08] px-4 py-3">
-                <p className="truncate text-sm font-semibold text-white">Settings</p>
-                <p className="truncate text-xs text-[var(--app-muted)]">Storage, appearance, password</p>
-              </div>
-              <Link
-                href="/settings#storage"
-                onClick={() => setIsSettingsMenuOpen(false)}
-                className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--app-text)] hover:bg-white/[0.08]"
-              >
-                <NavIcon name="library" />
-                Storage
-              </Link>
-              <Link
-                href="/settings#appearance"
-                onClick={() => setIsSettingsMenuOpen(false)}
-                className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--app-text)] hover:bg-white/[0.08]"
-              >
-                <NavIcon name="settings" />
-                Light / dark mode
-              </Link>
-              <Link
-                href="/settings#password"
-                onClick={() => setIsSettingsMenuOpen(false)}
-                className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--app-text)] hover:bg-white/[0.08]"
-              >
-                <NavIcon name="settings" />
-                Change password
-              </Link>
-              <div className="border-t border-white/[0.08] p-3">
-                <LogoutButton />
-              </div>
-            </div>
-          ) : null}
         </div>
       </div>
 
     </nav>
 
     {isSearchOpen ? (
-        <div className="fixed inset-0 z-[200] bg-black/70 px-4 py-5 backdrop-blur-sm sm:py-12">
+        <div className="fixed inset-0 z-[200] bg-black/35 px-4 py-5 backdrop-blur-sm sm:py-12">
           <button
             type="button"
             className="absolute inset-0 cursor-default"
             aria-label="Close search"
             onClick={() => setIsSearchOpen(false)}
           />
-          <div className="relative mx-auto max-w-2xl overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[rgba(22,22,22,0.78)] shadow-[0_24px_90px_rgba(0,0,0,0.55)] backdrop-blur-xl">
-            <div className="flex items-center gap-3 border-b border-white/[0.08] px-4 py-3">
+          <div className="relative mx-auto max-w-2xl overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-[0_24px_90px_rgba(0,0,0,0.2)]">
+            <div className="flex items-center gap-3 border-b border-[var(--app-border)] px-4 py-3">
               <NavIcon name="search" className="h-5 w-5 text-[var(--app-muted)]" />
               <input
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder="Search songs, playlists, pages"
-                className="min-w-0 flex-1 bg-transparent text-base text-white outline-none placeholder:text-[var(--app-muted)]"
+                className="min-w-0 flex-1 bg-transparent text-base text-[var(--app-text)] outline-none placeholder:text-[var(--app-muted)]"
                 autoFocus
               />
               <button
                 type="button"
                 onClick={() => setIsSearchOpen(false)}
-                className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--app-muted)] hover:bg-white/[0.08] hover:text-white"
+                className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--app-muted)] hover:bg-[var(--app-glass)] hover:text-[var(--app-text)]"
                 aria-label="Close search"
                 title="Close"
               >
@@ -511,13 +469,13 @@ export default function Navbar() {
                     key={result.id}
                     type="button"
                     onClick={() => void playSearchTrack(result)}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-white/[0.08]"
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-[var(--app-glass)]"
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-white">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--app-glass)] text-[var(--app-text)]">
                       <NavIcon name={result.icon} />
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold text-white">{result.label}</span>
+                      <span className="block truncate text-sm font-semibold text-[var(--app-text)]">{result.label}</span>
                       <span className="block truncate text-xs text-[var(--app-muted)]">{result.detail}</span>
                     </span>
                   </button>
@@ -526,13 +484,13 @@ export default function Navbar() {
                     key={result.id}
                     href={result.href}
                     onClick={() => setIsSearchOpen(false)}
-                    className="flex items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-white/[0.08]"
+                    className="flex items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-[var(--app-glass)]"
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-white">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--app-glass)] text-[var(--app-text)]">
                       <NavIcon name={result.icon} />
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold text-white">{result.label}</span>
+                      <span className="block truncate text-sm font-semibold text-[var(--app-text)]">{result.label}</span>
                       <span className="block truncate text-xs text-[var(--app-muted)]">{result.detail}</span>
                     </span>
                   </Link>
