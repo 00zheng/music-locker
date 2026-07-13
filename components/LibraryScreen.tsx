@@ -5,7 +5,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { useRouter, useSelectedLayoutSegment } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/Navbar";
@@ -36,10 +36,6 @@ type Track = {
   offlineOnly?: boolean;
 };
 
-type Props = {
-  playlistId?: string;
-};
-
 type OfflineTrackRecord = {
   id: string;
   title: string;
@@ -65,6 +61,23 @@ type LoadDataOptions = {
 };
 
 type PlaylistCoverUrlsById = Record<string, string>;
+
+type LibraryDataCache = {
+  user: User;
+  tracks: Track[];
+  playlists: Playlist[];
+  playlistCoverUrlsById: PlaylistCoverUrlsById;
+  trackMetadataById: TrackMetadataById;
+  updatedAt: number;
+};
+
+let libraryDataCache: LibraryDataCache | null = null;
+
+function offlineObjectUrlsFromTracks(tracks: Track[]) {
+  return tracks
+    .map((track) => track.offlineUrl)
+    .filter((url): url is string => Boolean(url));
+}
 
 function offlineAudioRequest(trackId: string) {
   return new Request(`/offline-audio/${trackId}`);
@@ -405,8 +418,10 @@ function ActionSheetButton({
   );
 }
 
-export default function LibraryScreen({ playlistId }: Props) {
+export default function LibraryScreen() {
   const router = useRouter();
+  const selectedPlaylistSegment = useSelectedLayoutSegment();
+  const playlistId = selectedPlaylistSegment ? decodeURIComponent(selectedPlaylistSegment) : undefined;
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -422,7 +437,6 @@ export default function LibraryScreen({ playlistId }: Props) {
   const [playlistRenameValue, setPlaylistRenameValue] = useState("");
   const [renamingTrackId, setRenamingTrackId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [playlistCoverUrl, setPlaylistCoverUrl] = useState<string | null>(null);
   const [draggedTrackId, setDraggedTrackId] = useState<string | null>(null);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
@@ -433,7 +447,7 @@ export default function LibraryScreen({ playlistId }: Props) {
   const offlineObjectUrlsRef = useRef<string[]>([]);
   const isLoadingDataRef = useRef(false);
   const isSavingPreferencesRef = useRef(false);
-  const pendingPlaylistCoversRef = useRef<Record<string, string>>({});
+  const playlistCoverUrlsByIdRef = useRef<PlaylistCoverUrlsById>({});
 
   const allTracksPlaylist = useMemo<Playlist>(
     () => ({
@@ -457,6 +471,11 @@ export default function LibraryScreen({ playlistId }: Props) {
   );
 
   const isAllTracksView = playlistId === ALL_TRACKS_PLAYLIST_ID;
+
+  const playlistCoverUrl = useMemo(
+    () => playlistCoverSource(activePlaylist, playlistCoverUrlsById),
+    [activePlaylist, playlistCoverUrlsById]
+  );
 
   const activeTrackIds = useMemo(() => {
     if (!activePlaylist) {
@@ -540,17 +559,39 @@ export default function LibraryScreen({ playlistId }: Props) {
 
   const replaceTracks = useCallback((nextTracks: Track[]) => {
     offlineObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-    offlineObjectUrlsRef.current = nextTracks
-      .map((track) => track.offlineUrl)
-      .filter((url): url is string => Boolean(url));
+    offlineObjectUrlsRef.current = offlineObjectUrlsFromTracks(nextTracks);
     setTracks(nextTracks);
   }, []);
 
-  useEffect(() => {
-    return () => {
-      offlineObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-    };
+  const hydrateLibraryFromCache = useCallback((cachedData: LibraryDataCache) => {
+    offlineObjectUrlsRef.current = offlineObjectUrlsFromTracks(cachedData.tracks);
+    setUser(cachedData.user);
+    setTracks(cachedData.tracks);
+    setPlaylistsState(cachedData.playlists);
+    playlistCoverUrlsByIdRef.current = cachedData.playlistCoverUrlsById;
+    setPlaylistCoverUrlsById(cachedData.playlistCoverUrlsById);
+    setTrackMetadataById(cachedData.trackMetadataById);
+    setLoading(false);
   }, []);
+
+  useEffect(() => {
+    playlistCoverUrlsByIdRef.current = playlistCoverUrlsById;
+  }, [playlistCoverUrlsById]);
+
+  useEffect(() => {
+    if (!user || loading) {
+      return;
+    }
+
+    libraryDataCache = {
+      user,
+      tracks,
+      playlists,
+      playlistCoverUrlsById,
+      trackMetadataById,
+      updatedAt: Date.now(),
+    };
+  }, [loading, playlistCoverUrlsById, playlists, trackMetadataById, tracks, user]);
 
   useEffect(() => {
     function handleCurrentTrack(event: Event) {
@@ -602,18 +643,11 @@ export default function LibraryScreen({ playlistId }: Props) {
     preferences: SyncedUserPreferences,
     signedCoverUrlsById: PlaylistCoverUrlsById = {}
   ) => {
-    const currentPlaylist = playlistId
-      ? preferences.playlists.find((playlist) => playlist.id === playlistId)
-      : null;
-    const pendingCoverUrl = playlistId ? pendingPlaylistCoversRef.current[playlistId] : null;
-
     setTrackMetadataById(preferences.trackMetadata);
     setPlaylistsState(preferences.playlists);
+    playlistCoverUrlsByIdRef.current = signedCoverUrlsById;
     setPlaylistCoverUrlsById(signedCoverUrlsById);
-    setPlaylistCoverUrl(
-      pendingCoverUrl || playlistCoverSource(currentPlaylist, signedCoverUrlsById)
-    );
-  }, [playlistId]);
+  }, []);
 
   function persistSyncedPreferences(
     value: Partial<SyncedUserPreferences>,
@@ -632,7 +666,7 @@ export default function LibraryScreen({ playlistId }: Props) {
           return;
         }
 
-        applySyncedPreferences(preferences, playlistCoverUrlsById);
+        applySyncedPreferences(preferences, playlistCoverUrlsByIdRef.current);
 
         if (successMessage) {
           setStatus(successMessage);
@@ -680,6 +714,18 @@ export default function LibraryScreen({ playlistId }: Props) {
       }
 
       setUser((existingUser) => (existingUser?.id === currentUser.id ? existingUser : currentUser));
+
+      const cachedData =
+        libraryDataCache?.user.id === currentUser.id ? libraryDataCache : null;
+
+      if (cachedData && showLoading) {
+        hydrateLibraryFromCache(cachedData);
+
+        if (clearStatus) {
+          setStatus("");
+        }
+      }
+
       const { preferences } = await loadSyncedUserPreferences(supabase, currentUser.id);
       const signedCoverUrlsById = navigator.onLine
         ? await createPlaylistCoverUrls(preferences.playlists)
@@ -733,7 +779,7 @@ export default function LibraryScreen({ playlistId }: Props) {
       isLoadingDataRef.current = false;
       setLoading(false);
     }
-  }, [applySyncedPreferences, attachOfflineInfo, replaceTracks, router]);
+  }, [applySyncedPreferences, attachOfflineInfo, hydrateLibraryFromCache, replaceTracks, router]);
 
   useEffect(() => {
     const timerId = window.setTimeout(() => {
@@ -1157,22 +1203,20 @@ export default function LibraryScreen({ playlistId }: Props) {
           : playlist
       );
       const coverSizeKb = Math.max(1, Math.round(coverBlob.size / 1024));
-
-      pendingPlaylistCoversRef.current[activePlaylist.id] = coverUrl;
-      setPlaylistCoverUrlsById((currentUrls) => ({
-        ...currentUrls,
+      const nextCoverUrlsById = {
+        ...playlistCoverUrlsByIdRef.current,
         [activePlaylist.id]: coverUrl,
-      }));
-      setPlaylistCoverUrl(coverUrl);
+      };
+
+      playlistCoverUrlsByIdRef.current = nextCoverUrlsById;
+      setPlaylistCoverUrlsById(nextCoverUrlsById);
 
       await persistPlaylists(nextPlaylists, `Cover updated and synced (${coverSizeKb} KB).`);
-      delete pendingPlaylistCoversRef.current[activePlaylist.id];
 
       if (previousCoverStoragePath && previousCoverStoragePath !== storagePath) {
         void supabase.storage.from("music").remove([previousCoverStoragePath]);
       }
     } catch (error) {
-      delete pendingPlaylistCoversRef.current[activePlaylist.id];
       setStatus(error instanceof Error ? error.message : "Could not update cover art.");
     } finally {
       if (coverInputRef.current) coverInputRef.current.value = "";
@@ -1180,14 +1224,14 @@ export default function LibraryScreen({ playlistId }: Props) {
   }
 
   function playerTrackFromTrack(track: Track, playlist?: Playlist | null) {
-    const playlistCoverUrl = playlistCoverSource(playlist, playlistCoverUrlsById);
+    const sourcePlaylistCoverUrl = playlistCoverSource(playlist, playlistCoverUrlsById);
     const activePlaylistCoverUrl = playlistCoverSource(activePlaylist, playlistCoverUrlsById);
 
     return {
       id: track.id,
       title: trackMetadataById[track.id]?.title || track.title,
       artist: trackMetadataById[track.id]?.artist || track.artist || playlist?.name || activePlaylist?.name || "Unknown artist",
-      coverDataUrl: trackMetadataById[track.id]?.coverDataUrl || playlistCoverUrl || activePlaylistCoverUrl,
+      coverDataUrl: trackMetadataById[track.id]?.coverDataUrl || sourcePlaylistCoverUrl || activePlaylistCoverUrl,
       audioUrl: track.offlineUrl || track.signedUrl || "",
       sourceHref: playlist && playlist.id !== ALL_TRACKS_PLAYLIST_ID ? `/library/${playlist.id}` : "/library",
       sourceLabel: playlist?.name || "Library",
