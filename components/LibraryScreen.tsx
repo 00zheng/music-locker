@@ -3,7 +3,8 @@
 /* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
@@ -257,11 +258,13 @@ function formatFileSize(value: number | null) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+type InlineIconName = "play" | "folder" | "add" | "back" | "more" | "queue" | "edit" | "download" | "remove" | "trash";
+
 function InlineIcon({
   name,
   className = "h-4 w-4",
 }: {
-  name: "play" | "folder" | "add" | "back" | "more" | "queue" | "edit" | "download" | "remove" | "trash";
+  name: InlineIconName;
   className?: string;
 }) {
   return (
@@ -330,6 +333,77 @@ function InlineIcon({
         </>
       )}
     </svg>
+  );
+}
+
+function ActionSheet({
+  label,
+  children,
+  onClose,
+}: {
+  label: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={label}
+      className="fixed inset-0 z-[1200] flex items-end justify-center bg-black/55 px-3 backdrop-blur-sm sm:items-center sm:px-6"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg overflow-hidden rounded-t-[28px] border border-white/[0.08] bg-[rgba(24,24,24,0.98)] shadow-[0_28px_90px_rgba(0,0,0,0.68)] backdrop-blur-2xl sm:rounded-[28px]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="max-h-[88svh] overflow-y-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 sm:px-5 sm:pb-5">
+          <div className="mx-auto mb-4 h-1.5 w-14 rounded-full bg-white/30" />
+          {children}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function ActionSheetButton({
+  icon,
+  children,
+  onClick,
+  disabled = false,
+  tone = "default",
+}: {
+  icon: InlineIconName;
+  children: ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: "default" | "danger";
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex min-h-14 w-full items-center gap-4 rounded-2xl px-3 py-3 text-left text-base font-semibold transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 ${
+        tone === "danger"
+          ? "text-red-300 hover:bg-red-500/[0.12]"
+          : "text-[var(--app-text)] hover:bg-white/[0.08]"
+      }`}
+    >
+      <span
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+          tone === "danger" ? "bg-red-500/10 text-red-300" : "bg-white/[0.08] text-[var(--app-muted)]"
+        }`}
+      >
+        <InlineIcon name={icon} className="h-5 w-5" />
+      </span>
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+    </button>
   );
 }
 
@@ -518,6 +592,26 @@ export default function LibraryScreen({ playlistId }: Props) {
     window.addEventListener(CURRENT_TRACK_EVENT, handleCurrentTrack as EventListener);
     return () => window.removeEventListener(CURRENT_TRACK_EVENT, handleCurrentTrack as EventListener);
   }, []);
+
+  useEffect(() => {
+    if (!openPlaylistMenuId && !openTrackMenuId) {
+      return;
+    }
+
+    function closeMenusOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      setOpenPlaylistMenuId(null);
+      setOpenTrackMenuId(null);
+      setRenamingPlaylistId(null);
+      setPlaylistRenameValue("");
+    }
+
+    window.addEventListener("keydown", closeMenusOnEscape);
+    return () => window.removeEventListener("keydown", closeMenusOnEscape);
+  }, [openPlaylistMenuId, openTrackMenuId]);
 
   const attachOfflineInfo = useCallback(async (inputTracks: Track[]) => {
     const tracksWithOfflineInfo = await Promise.all(
@@ -1504,6 +1598,192 @@ export default function LibraryScreen({ playlistId }: Props) {
     await loadData();
   }
 
+  const openPlaylistForMenu = openPlaylistMenuId
+    ? playlists.find((playlist) => playlist.id === openPlaylistMenuId) || null
+    : null;
+  const openPlaylistMenuTracks = openPlaylistForMenu ? tracksForPlaylist(openPlaylistForMenu) : [];
+  const openPlaylistMenuCover = openPlaylistForMenu
+    ? playlistCoverSource(openPlaylistForMenu, playlistCoverUrlsById) ||
+      trackMetadataById[openPlaylistMenuTracks[0]?.id || ""]?.coverDataUrl ||
+      null
+    : null;
+  const openTrackForMenu = openTrackMenuId ? tracksById.get(openTrackMenuId) || null : null;
+  const openTrackMenuTitle = openTrackForMenu
+    ? trackMetadataById[openTrackForMenu.id]?.title || openTrackForMenu.title
+    : "";
+  const openTrackMenuArtist = openTrackForMenu
+    ? trackMetadataById[openTrackForMenu.id]?.artist ||
+      openTrackForMenu.artist ||
+      activePlaylist?.name ||
+      "Unknown artist"
+    : "";
+  const openTrackMenuCover = openTrackForMenu
+    ? trackMetadataById[openTrackForMenu.id]?.coverDataUrl ||
+      playlistCoverSource(activePlaylist, playlistCoverUrlsById) ||
+      null
+    : null;
+
+  const playlistActionSheet = openPlaylistForMenu ? (
+    <ActionSheet
+      label={`${openPlaylistForMenu.name} playlist menu`}
+      onClose={() => {
+        setOpenPlaylistMenuId(null);
+        setRenamingPlaylistId(null);
+        setPlaylistRenameValue("");
+      }}
+    >
+      <div className="flex items-center gap-4 border-b border-white/[0.08] pb-4">
+        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white/[0.06] text-[var(--app-muted)]">
+          {openPlaylistMenuCover ? (
+            <img src={openPlaylistMenuCover} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <InlineIcon name="folder" className="h-8 w-8" />
+          )}
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-xl font-semibold text-white">{openPlaylistForMenu.name}</p>
+          <p className="mt-1 text-sm text-[var(--app-muted)]">
+            Playlist - {formatCount(openPlaylistMenuTracks.length)}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-1">
+        <ActionSheetButton icon="queue" onClick={() => addPlaylistToQueue(openPlaylistForMenu)}>
+          Add to queue
+        </ActionSheetButton>
+
+        {renamingPlaylistId === openPlaylistForMenu.id ? (
+          <div className="rounded-2xl bg-white/[0.05] p-3">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">
+              Rename playlist
+            </label>
+            <input
+              type="text"
+              value={playlistRenameValue}
+              onChange={(event) => setPlaylistRenameValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  savePlaylistName(openPlaylistForMenu.id);
+                }
+
+                if (event.key === "Escape") {
+                  cancelRenamingPlaylist();
+                }
+              }}
+              className="app-input mt-2 w-full px-3 py-2 text-sm"
+              autoFocus
+            />
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => savePlaylistName(openPlaylistForMenu.id)}
+                className="min-h-11 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-black"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={cancelRenamingPlaylist}
+                className="min-h-11 rounded-xl border border-[var(--app-border)] px-3 py-2 text-sm font-semibold text-[var(--app-muted)] transition hover:text-white"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <ActionSheetButton icon="edit" onClick={() => startRenamingPlaylist(openPlaylistForMenu)}>
+            Rename
+          </ActionSheetButton>
+        )}
+
+        <label className="block rounded-2xl bg-white/[0.05] p-3">
+          <span className="block text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">
+            Move playlist
+          </span>
+          <select
+            value={openPlaylistForMenu.folderId || ""}
+            onChange={(event) => movePlaylistToFolder(openPlaylistForMenu.id, event.target.value || null)}
+            className="app-input mt-2 w-full px-3 py-2 text-sm"
+          >
+            <option value="">Library</option>
+            {visibleFolders.map((folder) => (
+              <option key={folder.id} value={folder.id}>
+                {folder.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <ActionSheetButton icon="trash" tone="danger" onClick={() => deletePlaylist(openPlaylistForMenu)}>
+          Delete playlist
+        </ActionSheetButton>
+      </div>
+    </ActionSheet>
+  ) : null;
+
+  const trackActionSheet = openTrackForMenu ? (
+    <ActionSheet label={`${openTrackMenuTitle} track menu`} onClose={() => setOpenTrackMenuId(null)}>
+      <div className="flex items-center gap-4 border-b border-white/[0.08] pb-4">
+        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white/[0.06] text-[var(--app-muted)]">
+          {openTrackMenuCover ? (
+            <img src={openTrackMenuCover} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <InlineIcon name="play" className="h-8 w-8" />
+          )}
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-xl font-semibold text-white">{openTrackMenuTitle}</p>
+          <p className="mt-1 truncate text-sm text-[var(--app-muted)]">{openTrackMenuArtist}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-2xl bg-white/[0.05] p-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Properties</p>
+        <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+          <dt className="text-[var(--app-muted)]">Date</dt>
+          <dd className="min-w-0 truncate text-white">{formatTrackDate(openTrackForMenu.created_at) || "Unknown"}</dd>
+          <dt className="text-[var(--app-muted)]">Size</dt>
+          <dd className="min-w-0 truncate text-white">{formatFileSize(openTrackForMenu.file_size)}</dd>
+          <dt className="text-[var(--app-muted)]">Type</dt>
+          <dd className="min-w-0 truncate text-white">{openTrackForMenu.mime_type || "Unknown"}</dd>
+        </dl>
+      </div>
+
+      <div className="mt-3 space-y-1">
+        <ActionSheetButton icon="queue" onClick={() => addTrackToQueue(openTrackForMenu)}>
+          Add to queue
+        </ActionSheetButton>
+        <ActionSheetButton icon="edit" onClick={() => startRenamingTrack(openTrackForMenu)}>
+          Rename
+        </ActionSheetButton>
+        {openTrackForMenu.isOfflineAvailable ? (
+          <ActionSheetButton icon="remove" onClick={() => void removeTrackOffline(openTrackForMenu)}>
+            Remove offline
+          </ActionSheetButton>
+        ) : (
+          <ActionSheetButton
+            icon="download"
+            onClick={() => void downloadTrackOffline(openTrackForMenu)}
+            disabled={!openTrackForMenu.signedUrl}
+          >
+            Download offline
+          </ActionSheetButton>
+        )}
+        {!isAllTracksView ? (
+          <ActionSheetButton
+            icon="remove"
+            tone="danger"
+            onClick={() => removeTrackFromPlaylist(openTrackForMenu.id)}
+          >
+            Remove from playlist
+          </ActionSheetButton>
+        ) : null}
+      </div>
+    </ActionSheet>
+  ) : null;
+
   if (loading) {
     return (
       <>
@@ -1742,6 +2022,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                             type="button"
                             onClick={() => {
                               setOpenPlaylistMenuId((current) => (current === playlist.id ? null : playlist.id));
+                              setOpenTrackMenuId(null);
                               setRenamingPlaylistId(null);
                               setPlaylistRenameValue("");
                             }}
@@ -1753,90 +2034,6 @@ export default function LibraryScreen({ playlistId }: Props) {
                           </button>
                         ) : null}
                       </div>
-
-                      {openPlaylistMenuId === playlist.id && !isBuiltInPlaylist ? (
-                        <div className="absolute right-2 top-[calc(100%-2.25rem)] z-50 w-[min(15rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-white/[0.1] bg-[rgba(24,24,24,0.92)] p-2 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl sm:top-2">
-                          <button
-                            type="button"
-                            onClick={() => addPlaylistToQueue(playlist)}
-                            className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08]"
-                          >
-                            <InlineIcon name="queue" className="h-4 w-4 text-[var(--app-muted)]" />
-                            Add to queue
-                          </button>
-                          {renamingPlaylistId === playlist.id ? (
-                            <div className="my-1 rounded-xl bg-white/[0.04] px-3 py-2">
-                              <input
-                                type="text"
-                                value={playlistRenameValue}
-                                onChange={(event) => setPlaylistRenameValue(event.target.value)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") {
-                                    event.preventDefault();
-                                    savePlaylistName(playlist.id);
-                                  }
-
-                                  if (event.key === "Escape") {
-                                    cancelRenamingPlaylist();
-                                  }
-                                }}
-                                className="app-input w-full px-2 py-1.5 text-xs"
-                                autoFocus
-                              />
-                              <div className="mt-2 flex gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => savePlaylistName(playlist.id)}
-                                  className="flex-1 rounded-lg bg-white px-2 py-1.5 text-xs font-semibold text-black"
-                                >
-                                  Save
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={cancelRenamingPlaylist}
-                                  className="flex-1 rounded-lg border border-[var(--app-border)] px-2 py-1.5 text-xs text-[var(--app-muted)] hover:text-white"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => startRenamingPlaylist(playlist)}
-                              className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08]"
-                            >
-                              <InlineIcon name="edit" className="h-4 w-4 text-[var(--app-muted)]" />
-                              Rename
-                            </button>
-                          )}
-                          <label className="my-1 block rounded-xl bg-white/[0.04] px-3 py-2">
-                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">
-                              Move
-                            </span>
-                            <select
-                              value={playlist.folderId || ""}
-                              onChange={(event) => movePlaylistToFolder(playlist.id, event.target.value || null)}
-                              className="app-input w-full px-2 py-1.5 text-xs"
-                            >
-                              <option value="">Library</option>
-                              {visibleFolders.map((folder) => (
-                                <option key={folder.id} value={folder.id}>
-                                  {folder.name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => deletePlaylist(playlist)}
-                            className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-red-300 transition hover:bg-red-500/[0.12]"
-                          >
-                            <InlineIcon name="trash" className="h-4 w-4" />
-                            Delete playlist
-                          </button>
-                        </div>
-                      ) : null}
                     </div>
                   );
                 })}
@@ -1849,6 +2046,7 @@ export default function LibraryScreen({ playlistId }: Props) {
             ) : null}
           </div>
         </main>
+        {playlistActionSheet}
       </>
     );
   }
@@ -1984,7 +2182,6 @@ export default function LibraryScreen({ playlistId }: Props) {
                 <div className="divide-y divide-white/[0.06]">
                   {visibleTracks.map((track, index) => {
                   const displayTitle = trackMetadataById[track.id]?.title || track.title;
-                  const trackDate = formatTrackDate(track.created_at);
                   const isCurrentTrack = currentTrackId === track.id;
                   const isSelected = selectedTrackIdSet.has(track.id);
 
@@ -2062,79 +2259,18 @@ export default function LibraryScreen({ playlistId }: Props) {
                         </div>
                         <button
                           type="button"
-                          onClick={() => setOpenTrackMenuId((currentTrackId) => (currentTrackId === track.id ? null : track.id))}
+                          onClick={() => {
+                            setOpenTrackMenuId((currentTrackId) => (currentTrackId === track.id ? null : track.id));
+                            setOpenPlaylistMenuId(null);
+                            setRenamingPlaylistId(null);
+                            setPlaylistRenameValue("");
+                          }}
                           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-white"
                           aria-label={`Open menu for ${displayTitle}`}
                           title="Track menu"
                         >
                           <InlineIcon name="more" className="h-5 w-5" />
                         </button>
-
-                        {openTrackMenuId === track.id ? (
-                          <div className="absolute right-0 top-11 z-40 w-[min(16rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-white/[0.1] bg-[rgba(24,24,24,0.92)] p-2 text-sm shadow-[0_18px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl">
-                            <div className="mb-1 rounded-xl bg-white/[0.04] px-3 py-2">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Properties</p>
-                              <p className="mt-1 truncate text-xs text-[var(--app-muted)]">Date: {trackDate || "Unknown"}</p>
-                              <p className="truncate text-xs text-[var(--app-muted)]">Size: {formatFileSize(track.file_size)}</p>
-                              <p className="truncate text-xs text-[var(--app-muted)]">Type: {track.mime_type || "Unknown"}</p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => addTrackToQueue(track)}
-                              className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08]"
-                            >
-                              <InlineIcon name="queue" className="h-4 w-4 text-[var(--app-muted)]" />
-                              Add to queue
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => startRenamingTrack(track)}
-                              className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08]"
-                            >
-                              <InlineIcon name="edit" className="h-4 w-4 text-[var(--app-muted)]" />
-                              Rename
-                            </button>
-                            {track.isOfflineAvailable ? (
-                              <button
-                                type="button"
-                                onClick={() => void removeTrackOffline(track)}
-                                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08]"
-                              >
-                                <InlineIcon name="remove" className="h-4 w-4 text-[var(--app-muted)]" />
-                                Remove offline
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => void downloadTrackOffline(track)}
-                                disabled={!track.signedUrl}
-                                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--app-text)] transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                <InlineIcon name="download" className="h-4 w-4 text-[var(--app-muted)]" />
-                                Download offline
-                              </button>
-                            )}
-                            {!isAllTracksView ? (
-                              <button
-                                type="button"
-                                onClick={() => removeTrackFromPlaylist(track.id)}
-                                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-red-300 transition hover:bg-red-500/[0.12]"
-                              >
-                                <InlineIcon name="remove" className="h-4 w-4" />
-                                Remove from playlist
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              onClick={() => void deleteTracks([track.id])}
-                              disabled={isDeletingTracks}
-                              className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-red-300 transition hover:bg-red-500/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              <InlineIcon name="trash" className="h-4 w-4" />
-                              Delete track
-                            </button>
-                          </div>
-                        ) : null}
                       </div>
                     );
                   })}
@@ -2152,6 +2288,7 @@ export default function LibraryScreen({ playlistId }: Props) {
           </div>
         </div>
       </main>
+      {trackActionSheet}
     </>
   );
 }
