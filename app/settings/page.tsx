@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 
 import Navbar from "@/components/Navbar";
+import LogoutButton from "@/components/LogoutButton";
 import { supabase } from "@/lib/supabase";
 import {
   applyThemeToDocument,
@@ -13,20 +13,11 @@ import {
   saveSyncedUserPreferences,
   type AppThemePreferences,
   type ThemeId,
-  type UserProfilePreferences,
 } from "@/lib/user-prefs";
 
-const themeChoices: Array<{ id: ThemeId; label: string; description: string }> = [
-  { id: "nocturne", label: "Black", description: "Simple monochrome" },
-  { id: "sunset", label: "Gray", description: "Simple monochrome" },
-  { id: "ocean", label: "Slate", description: "Simple monochrome" },
-  { id: "forest", label: "Soft Black", description: "Simple monochrome" },
-];
-
-const widthChoices: Array<{ id: AppThemePreferences["contentWidth"]; label: string }> = [
-  { id: "compact", label: "Compact" },
-  { id: "default", label: "Default" },
-  { id: "wide", label: "Wide" },
+const appearanceChoices: Array<{ id: ThemeId; label: string; description: string }> = [
+  { id: "nocturne", label: "Dark", description: "Black app background" },
+  { id: "light", label: "Light", description: "Bright app background" },
 ];
 
 type StorageSummary = {
@@ -82,27 +73,10 @@ function readOfflineBytes(userId: string) {
   }
 }
 
-async function fileToDataUrl(file: File) {
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("Could not read image file."));
-
-    reader.readAsDataURL(file);
-  });
-}
-
 export default function SettingsPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
-
-  const [profile, setProfile] = useState<UserProfilePreferences>({
-    username: "",
-    bio: "",
-    avatarDataUrl: null,
-  });
 
   const [theme, setTheme] = useState<AppThemePreferences>({
     themeId: "nocturne",
@@ -155,7 +129,6 @@ export default function SettingsPage() {
 
       setUser(data.user);
       const { preferences } = await loadSyncedUserPreferences(supabase, data.user.id);
-      setProfile(preferences.profile);
       setTheme(preferences.theme);
       applyThemeToDocument(preferences.theme);
       await loadStorage(data.user);
@@ -165,21 +138,6 @@ export default function SettingsPage() {
 
     void checkUser();
   }, [loadStorage, router]);
-
-  async function saveProfile() {
-    if (!user) {
-      return;
-    }
-
-    const { error } = await saveSyncedUserPreferences(supabase, user.id, { profile });
-
-    if (error) {
-      setStatus(`Saved on this device. Cloud sync failed: ${error.message}`);
-      return;
-    }
-
-    setStatus("Profile updated and synced.");
-  }
 
   async function saveTheme(nextTheme: AppThemePreferences) {
     if (!user) {
@@ -196,19 +154,6 @@ export default function SettingsPage() {
     }
 
     setStatus("Theme preferences updated and synced.");
-  }
-
-  async function handleAvatarChange(file: File) {
-    if (!file.type.startsWith("image/")) {
-      setStatus("Profile picture must be an image.");
-      return;
-    }
-
-    const dataUrl = await fileToDataUrl(file);
-    setProfile((current) => ({
-      ...current,
-      avatarDataUrl: dataUrl,
-    }));
   }
 
   async function updatePassword() {
@@ -234,27 +179,6 @@ export default function SettingsPage() {
     setStatus("Password updated.");
   }
 
-  async function shareProfile() {
-    const url = `${window.location.origin}/library`;
-    const shareText = `${profile.username || user?.email || "Music Locker user"}\n${profile.bio || "Check out my music locker profile."}\n${url}`;
-
-    try {
-      if (navigator.share) {
-        await navigator.share({
-          title: "Music Locker profile",
-          text: profile.bio || "Check out my music locker profile.",
-          url,
-        });
-      } else if (navigator.clipboard) {
-        await navigator.clipboard.writeText(shareText);
-      }
-
-      setStatus("Profile share link ready.");
-    } catch {
-      setStatus("Could not share profile right now.");
-    }
-  }
-
   if (checkingAuth) {
     return (
       <main className="app-shell min-h-screen text-[var(--app-text)]">
@@ -272,160 +196,71 @@ export default function SettingsPage() {
       <section className="app-content px-6 py-10">
         <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold">Account</h1>
+            <h1 className="text-3xl font-semibold">Settings</h1>
             <p className="mt-3 text-[var(--app-muted)]">
-              Profile, storage, password, and layout.
+              Storage, appearance, password, and sign out.
             </p>
           </div>
           <button
             type="button"
             onClick={() => user && void loadStorage(user)}
-            className="rounded-full border border-[var(--app-border)] px-4 py-2 text-sm"
+            className="rounded-full border border-[var(--app-border)] px-4 py-2 text-sm transition hover:bg-[var(--app-glass)]"
           >
             Refresh storage
           </button>
         </div>
 
-        <div className="app-card p-6">
-          <h2 className="text-lg font-semibold">Profile</h2>
+        <div className="grid gap-5 lg:grid-cols-2">
+          <section id="appearance" className="app-card scroll-mt-24 p-6">
+            <h2 className="text-lg font-semibold">Appearance</h2>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {appearanceChoices.map((choice) => {
+                const isSelected =
+                  choice.id === "light" ? theme.themeId === "light" : theme.themeId !== "light";
 
-          <div className="mt-4 space-y-4">
-            <div className="flex items-center gap-3">
-              {profile.avatarDataUrl ? (
-                <Image
-                  src={profile.avatarDataUrl}
-                  alt="Profile avatar"
-                  width={48}
-                  height={48}
-                  unoptimized
-                  className="h-12 w-12 rounded-full object-cover"
-                />
-              ) : (
-                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-[var(--app-border)] text-xs text-[var(--app-muted)]">
-                  Avatar
-                </div>
-              )}
-
-              <label className="rounded-md border border-[var(--app-border)] px-3 py-2 text-sm">
-                Upload picture
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={async (event) => {
-                    const selected = event.target.files?.[0];
-
-                    if (selected) {
-                      await handleAvatarChange(selected);
+                return (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    onClick={() =>
+                      void saveTheme({
+                        ...theme,
+                        themeId: choice.id,
+                      })
                     }
-                  }}
-                />
-              </label>
+                    className={`rounded-2xl border p-4 text-left transition ${
+                      isSelected
+                        ? "border-[var(--app-accent)] bg-[var(--app-glass-strong)]"
+                        : "border-[var(--app-border)] hover:bg-[var(--app-glass)]"
+                    }`}
+                    aria-pressed={isSelected}
+                  >
+                    <span className="block text-sm font-semibold text-[var(--app-text)]">
+                      {choice.label}
+                    </span>
+                    <span className="mt-1 block text-xs text-[var(--app-muted)]">
+                      {choice.description}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
+          </section>
 
-            <label className="block">
-              <span className="text-sm text-[var(--app-muted)]">Username</span>
-              <input
-                type="text"
-                value={profile.username}
-                autoComplete="off"
-                name="music-locker-display-name"
-                onChange={(event) =>
-                  setProfile((current) => ({
-                    ...current,
-                    username: event.target.value,
-                  }))
-                }
-                className="app-input mt-1 w-full px-3 py-2"
-              />
-            </label>
-
-            <label className="block">
-              <span className="text-sm text-[var(--app-muted)]">Bio</span>
-              <textarea
-                value={profile.bio}
-                onChange={(event) =>
-                  setProfile((current) => ({
-                    ...current,
-                    bio: event.target.value,
-                  }))
-                }
-                rows={3}
-                autoComplete="off"
-                name="music-locker-bio"
-                className="app-input mt-1 w-full px-3 py-2"
-              />
-            </label>
-
-            <label className="block">
-              <span className="text-sm text-[var(--app-muted)]">Theme</span>
-              <select
-                value={theme.themeId}
-                onChange={(event) =>
-                  void saveTheme({
-                    ...theme,
-                    themeId: event.target.value as ThemeId,
-                  })
-                }
-                className="app-input mt-1 w-full px-3 py-2"
-              >
-                {themeChoices.map((choice) => (
-                  <option key={choice.id} value={choice.id}>
-                    {choice.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="text-sm text-[var(--app-muted)]">UI width</span>
-              <select
-                value={theme.contentWidth}
-                onChange={(event) =>
-                  void saveTheme({
-                    ...theme,
-                    contentWidth: event.target.value as AppThemePreferences["contentWidth"],
-                  })
-                }
-                className="app-input mt-1 w-full px-3 py-2"
-              >
-                {widthChoices.map((choice) => (
-                  <option key={choice.id} value={choice.id}>
-                    {choice.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <p className="text-sm text-[var(--app-muted)]">Account email: {user?.email}</p>
-
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => void saveProfile()} className="app-button px-4 py-2 text-sm">
-                Save
-              </button>
-
-              <button type="button" onClick={shareProfile} className="rounded-md border border-[var(--app-border)] px-4 py-2 text-sm">
-                Share
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-5 grid gap-5 lg:grid-cols-2">
-          <section className="app-card p-6">
+          <section id="storage" className="app-card scroll-mt-24 p-6">
             <h2 className="text-lg font-semibold">Storage</h2>
             <div className="mt-4 grid gap-3">
               <div className="rounded-lg border border-[var(--app-border)] p-4">
                 <p className="text-xs text-[var(--app-muted)]">Cloud library</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{formatBytes(storageSummary.cloudBytes)}</p>
+                <p className="mt-1 text-2xl font-semibold text-[var(--app-text)]">{formatBytes(storageSummary.cloudBytes)}</p>
               </div>
               <div className="rounded-lg border border-[var(--app-border)] p-4">
                 <p className="text-xs text-[var(--app-muted)]">Downloaded offline</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{formatBytes(storageSummary.offlineBytes)}</p>
+                <p className="mt-1 text-2xl font-semibold text-[var(--app-text)]">{formatBytes(storageSummary.offlineBytes)}</p>
               </div>
               <div className="rounded-lg border border-[var(--app-border)] p-4">
                 <p className="text-xs text-[var(--app-muted)]">Browser storage</p>
-                <p className="mt-1 text-sm text-white">
+                <p className="mt-1 text-sm text-[var(--app-text)]">
                   {formatBytes(storageSummary.browserUsageBytes)} used
                   {storageSummary.browserQuotaBytes !== null
                     ? ` of ${formatBytes(storageSummary.browserQuotaBytes)}`
@@ -435,7 +270,7 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          <section className="app-card p-6">
+          <section id="password" className="app-card scroll-mt-24 p-6">
             <h2 className="text-lg font-semibold">Change password</h2>
             <div className="mt-4 space-y-4">
               <label className="block">
@@ -467,6 +302,14 @@ export default function SettingsPage() {
               >
                 Update password
               </button>
+            </div>
+          </section>
+
+          <section id="sign-out" className="app-card scroll-mt-24 p-6">
+            <h2 className="text-lg font-semibold">Sign out</h2>
+            <p className="mt-2 text-sm text-[var(--app-muted)]">{user?.email}</p>
+            <div className="mt-4">
+              <LogoutButton />
             </div>
           </section>
         </div>

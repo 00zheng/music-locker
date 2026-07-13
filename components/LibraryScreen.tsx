@@ -12,11 +12,9 @@ import Navbar from "@/components/Navbar";
 import {
   loadSyncedUserPreferences,
   saveSyncedUserPreferences,
-  type PlaylistFolder,
   type Playlist,
   type SyncedUserPreferences,
   type TrackMetadataById,
-  type UserProfilePreferences,
 } from "@/lib/user-prefs";
 import {
   CURRENT_TRACK_EVENT,
@@ -258,7 +256,7 @@ function formatFileSize(value: number | null) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type InlineIconName = "play" | "folder" | "add" | "back" | "more" | "queue" | "edit" | "download" | "remove" | "trash";
+type InlineIconName = "play" | "add" | "back" | "more" | "queue" | "edit" | "download" | "remove" | "trash";
 
 function InlineIcon({
   name,
@@ -413,21 +411,10 @@ export default function LibraryScreen({ playlistId }: Props) {
   const [loading, setLoading] = useState(true);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylistsState] = useState<Playlist[]>([]);
-  const [playlistFolders, setPlaylistFoldersState] = useState<PlaylistFolder[]>([]);
   const [playlistCoverUrlsById, setPlaylistCoverUrlsById] = useState<PlaylistCoverUrlsById>({});
   const [trackMetadataById, setTrackMetadataById] = useState<TrackMetadataById>({});
-  const [profile, setProfile] = useState<UserProfilePreferences>({
-    username: "",
-    bio: "",
-    avatarDataUrl: null,
-  });
   const [searchQuery, setSearchQuery] = useState("");
   const [status, setStatus] = useState("");
-  const [newPlaylistName, setNewPlaylistName] = useState("");
-  const [newFolderName, setNewFolderName] = useState("");
-  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
-  const [addKind, setAddKind] = useState<"playlist" | "folder" | null>(null);
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [openTrackMenuId, setOpenTrackMenuId] = useState<string | null>(null);
   const [openPlaylistMenuId, setOpenPlaylistMenuId] = useState<string | null>(null);
@@ -437,7 +424,6 @@ export default function LibraryScreen({ playlistId }: Props) {
   const [renameValue, setRenameValue] = useState("");
   const [playlistCoverUrl, setPlaylistCoverUrl] = useState<string | null>(null);
   const [draggedTrackId, setDraggedTrackId] = useState<string | null>(null);
-  const [draggedPlaylistId, setDraggedPlaylistId] = useState<string | null>(null);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [lastSelectedTrackId, setLastSelectedTrackId] = useState<string | null>(null);
@@ -532,24 +518,8 @@ export default function LibraryScreen({ playlistId }: Props) {
   }, [activePlaylist?.name, activeTrackIdSet, activeTrackOrder, playlistId, searchQuery, trackMetadataById, tracks]);
 
   const visiblePlaylists = useMemo(
-    () => {
-      const folderPlaylists = playlists
-        .filter((playlist) => (playlist.folderId || null) === selectedFolderId)
-        .sort((a, b) => a.manualOrder - b.manualOrder);
-
-      return folderPlaylists;
-    },
-    [playlists, selectedFolderId]
-  );
-
-  const visibleFolders = useMemo(
-    () => [...playlistFolders].sort((a, b) => a.manualOrder - b.manualOrder),
-    [playlistFolders]
-  );
-
-  const selectedFolder = useMemo(
-    () => playlistFolders.find((folder) => folder.id === selectedFolderId) || null,
-    [playlistFolders, selectedFolderId]
+    () => [...playlists].sort((a, b) => a.manualOrder - b.manualOrder),
+    [playlists]
   );
 
   const selectedTrackIdsInLibrary = useMemo(
@@ -567,7 +537,7 @@ export default function LibraryScreen({ playlistId }: Props) {
     [activeTrackIds, tracksById]
   );
   const unavailableActiveTrackCount = Math.max(0, activeTrackIds.length - availableActiveTrackCount);
-  const displayName = profile.username.trim() || user?.email || "Music Locker";
+  const displayName = user?.email || "Music Locker";
 
   const replaceTracks = useCallback((nextTracks: Track[]) => {
     offlineObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -639,9 +609,7 @@ export default function LibraryScreen({ playlistId }: Props) {
     const pendingCoverUrl = playlistId ? pendingPlaylistCoversRef.current[playlistId] : null;
 
     setTrackMetadataById(preferences.trackMetadata);
-    setProfile(preferences.profile);
     setPlaylistsState(preferences.playlists);
-    setPlaylistFoldersState(preferences.playlistFolders);
     setPlaylistCoverUrlsById(signedCoverUrlsById);
     setPlaylistCoverUrl(
       pendingCoverUrl || playlistCoverSource(currentPlaylist, signedCoverUrlsById)
@@ -679,24 +647,6 @@ export default function LibraryScreen({ playlistId }: Props) {
   function persistPlaylists(nextPlaylists: Playlist[], successMessage?: string) {
     setPlaylistsState(nextPlaylists);
     return persistSyncedPreferences({ playlists: nextPlaylists }, successMessage);
-  }
-
-  function persistPlaylistFolders(nextFolders: PlaylistFolder[], successMessage?: string) {
-    setPlaylistFoldersState(nextFolders);
-    return persistSyncedPreferences({ playlistFolders: nextFolders }, successMessage);
-  }
-
-  function persistPlaylistsAndFolders(
-    nextPlaylists: Playlist[],
-    nextFolders: PlaylistFolder[],
-    successMessage?: string
-  ) {
-    setPlaylistsState(nextPlaylists);
-    setPlaylistFoldersState(nextFolders);
-    return persistSyncedPreferences(
-      { playlists: nextPlaylists, playlistFolders: nextFolders },
-      successMessage
-    );
   }
 
   function persistTrackMetadata(nextMetadata: TrackMetadataById, successMessage?: string) {
@@ -983,13 +933,8 @@ export default function LibraryScreen({ playlistId }: Props) {
     await loadData();
   }
 
-  async function createPlaylist() {
+  function createPlaylist() {
     if (!user) {
-      return;
-    }
-
-    const name = newPlaylistName.trim();
-    if (!name) {
       return;
     }
 
@@ -997,101 +942,17 @@ export default function LibraryScreen({ playlistId }: Props) {
       ...playlists,
       {
         id: crypto.randomUUID(),
-        name,
+        name: "untitled playlist",
         trackIds: [],
         manualOrder: playlists.length,
         createdAt: new Date().toISOString(),
         coverDataUrl: null,
         coverStoragePath: null,
-        folderId: selectedFolderId,
+        folderId: null,
       },
     ];
 
-    persistPlaylists(nextPlaylists, "Playlist created and synced.");
-    setNewPlaylistName("");
-    setAddKind(null);
-    setIsAddMenuOpen(false);
-  }
-
-  function createFolder() {
-    if (!user) {
-      return;
-    }
-
-    const name = newFolderName.trim();
-
-    if (!name) {
-      return;
-    }
-
-    const nextFolders = [
-      ...playlistFolders,
-      {
-        id: crypto.randomUUID(),
-        name,
-        manualOrder: playlistFolders.length,
-        createdAt: new Date().toISOString(),
-      },
-    ];
-
-    persistPlaylistFolders(nextFolders, "Folder created and synced.");
-    setNewFolderName("");
-    setAddKind(null);
-    setIsAddMenuOpen(false);
-  }
-
-  function groupPlaylistsIntoFolder(targetPlaylistId: string) {
-    if (!user || !draggedPlaylistId || draggedPlaylistId === targetPlaylistId) {
-      setDraggedPlaylistId(null);
-      return;
-    }
-
-    const sourcePlaylist = playlists.find((playlist) => playlist.id === draggedPlaylistId);
-    const targetPlaylist = playlists.find((playlist) => playlist.id === targetPlaylistId);
-
-    if (!sourcePlaylist || !targetPlaylist) {
-      setDraggedPlaylistId(null);
-      return;
-    }
-
-    const existingFolderId = targetPlaylist.folderId || sourcePlaylist.folderId || null;
-    const folderId = existingFolderId || crypto.randomUUID();
-    const nextFolders = existingFolderId
-      ? playlistFolders
-      : [
-          ...playlistFolders,
-          {
-            id: folderId,
-            name: `${targetPlaylist.name} folder`,
-            manualOrder: playlistFolders.length,
-            createdAt: new Date().toISOString(),
-          },
-        ];
-    const nextPlaylists = playlists.map((playlist) =>
-      playlist.id === sourcePlaylist.id || playlist.id === targetPlaylist.id
-        ? { ...playlist, folderId }
-        : playlist
-    );
-
-    persistPlaylistsAndFolders(nextPlaylists, nextFolders, "Folder created from playlists and synced.");
-    setSelectedFolderId(folderId);
-    setDraggedPlaylistId(null);
-  }
-
-  function movePlaylistToFolder(targetPlaylistId: string, folderId: string | null) {
-    if (!user) {
-      return;
-    }
-
-    const nextPlaylists = playlists.map((playlist) =>
-      playlist.id === targetPlaylistId ? { ...playlist, folderId } : playlist
-    );
-
-    persistPlaylists(
-      nextPlaylists,
-      folderId ? "Playlist moved to folder and synced." : "Playlist moved to library and synced."
-    );
-    setOpenPlaylistMenuId(null);
+    void persistPlaylists(nextPlaylists, "Playlist created and synced.");
   }
 
   function startRenamingPlaylist(playlist: Playlist) {
@@ -1123,29 +984,6 @@ export default function LibraryScreen({ playlistId }: Props) {
     setRenamingPlaylistId(null);
     setPlaylistRenameValue("");
     setOpenPlaylistMenuId(null);
-  }
-
-  function deleteFolder(folderId: string) {
-    if (!user) {
-      return;
-    }
-
-    const nextFolders = playlistFolders.filter((folder) => folder.id !== folderId);
-    const nextPlaylists = playlists.map((playlist) =>
-      playlist.folderId === folderId ? { ...playlist, folderId: null } : playlist
-    );
-
-    setPlaylistsState(nextPlaylists);
-    setPlaylistFoldersState(nextFolders);
-    persistSyncedPreferences(
-      {
-        playlists: nextPlaylists,
-        playlistFolders: nextFolders,
-        deletedPlaylistFolderIds: [folderId],
-      },
-      "Folder deleted. Playlists moved to library."
-    );
-    setSelectedFolderId(null);
   }
 
   function deletePlaylist(playlist: Playlist) {
@@ -1637,7 +1475,7 @@ export default function LibraryScreen({ playlistId }: Props) {
           {openPlaylistMenuCover ? (
             <img src={openPlaylistMenuCover} alt="" className="h-full w-full object-cover" />
           ) : (
-            <InlineIcon name="folder" className="h-8 w-8" />
+            <InlineIcon name="queue" className="h-8 w-8" />
           )}
         </div>
         <div className="min-w-0">
@@ -1697,24 +1535,6 @@ export default function LibraryScreen({ playlistId }: Props) {
             Rename
           </ActionSheetButton>
         )}
-
-        <label className="block rounded-2xl bg-white/[0.05] p-3">
-          <span className="block text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">
-            Move playlist
-          </span>
-          <select
-            value={openPlaylistForMenu.folderId || ""}
-            onChange={(event) => movePlaylistToFolder(openPlaylistForMenu.id, event.target.value || null)}
-            className="app-input mt-2 w-full px-3 py-2 text-sm"
-          >
-            <option value="">Library</option>
-            {visibleFolders.map((folder) => (
-              <option key={folder.id} value={folder.id}>
-                {folder.name}
-              </option>
-            ))}
-          </select>
-        </label>
 
         <ActionSheetButton icon="trash" tone="danger" onClick={() => deletePlaylist(openPlaylistForMenu)}>
           Delete playlist
@@ -1808,161 +1628,18 @@ export default function LibraryScreen({ playlistId }: Props) {
             <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <h1 className="text-3xl font-semibold">Your Library</h1>
-                <p className="mt-2 text-sm text-[var(--app-muted)]">Simple playlists and folders.</p>
+                <p className="mt-2 text-sm text-[var(--app-muted)]">Simple playlists for your music.</p>
               </div>
 
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setIsAddMenuOpen((current) => !current)}
-                  className="inline-flex h-10 items-center gap-2 rounded-full bg-white px-4 text-sm font-semibold text-black"
-                >
-                  <InlineIcon name="add" />
-                  Add
-                </button>
-                {isAddMenuOpen ? (
-                  <div className="absolute right-0 z-30 mt-2 w-72 rounded-2xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.78)] p-3 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setAddKind("playlist")}
-                        className={`rounded-xl border px-3 py-2 text-sm ${
-                          addKind === "playlist" ? "border-white text-white" : "border-[var(--app-border)] text-[var(--app-muted)]"
-                        }`}
-                      >
-                        Playlist
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setAddKind("folder")}
-                        className={`rounded-xl border px-3 py-2 text-sm ${
-                          addKind === "folder" ? "border-white text-white" : "border-[var(--app-border)] text-[var(--app-muted)]"
-                        }`}
-                      >
-                        Folder
-                      </button>
-                    </div>
-
-                    {addKind === "playlist" ? (
-                      <div className="mt-3 flex gap-2">
-                        <input
-                          type="text"
-                          value={newPlaylistName}
-                          onChange={(event) => setNewPlaylistName(event.target.value)}
-                          placeholder="Playlist name"
-                          className="app-input min-w-0 flex-1 px-3 py-2 text-sm"
-                          autoFocus
-                        />
-                        <button type="button" onClick={createPlaylist} className="app-button px-3 py-2 text-sm">
-                          Save
-                        </button>
-                      </div>
-                    ) : null}
-
-                    {addKind === "folder" ? (
-                      <div className="mt-3 flex gap-2">
-                        <input
-                          type="text"
-                          value={newFolderName}
-                          onChange={(event) => setNewFolderName(event.target.value)}
-                          placeholder="Folder name"
-                          className="app-input min-w-0 flex-1 px-3 py-2 text-sm"
-                          autoFocus
-                        />
-                        <button type="button" onClick={createFolder} className="app-button px-3 py-2 text-sm">
-                          Save
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
+              <button
+                type="button"
+                onClick={createPlaylist}
+                className="inline-flex h-10 items-center gap-2 rounded-full bg-white px-4 text-sm font-semibold text-black transition hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <InlineIcon name="add" />
+                Add
+              </button>
             </div>
-
-            {selectedFolder ? (
-              <div className="mb-5 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedFolderId(null)}
-                    className="rounded-full border border-[var(--app-border)] px-3 py-1.5 text-sm text-[var(--app-muted)] hover:text-white"
-                  >
-                    Back
-                  </button>
-                  <div>
-                    <h2 className="text-xl font-semibold text-white">{selectedFolder.name}</h2>
-                    <p className="text-sm text-[var(--app-muted)]">
-                      {formatCount(playlists.filter((playlist) => playlist.folderId === selectedFolder.id).length)}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => deleteFolder(selectedFolder.id)}
-                  className="rounded-full border border-red-400/30 px-3 py-1.5 text-sm text-red-300 transition hover:bg-red-500/10"
-                >
-                  Delete folder
-                </button>
-              </div>
-            ) : null}
-
-            {!selectedFolderId && visibleFolders.length > 0 ? (
-              <div className="mb-8 grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
-                {visibleFolders.map((folder) => {
-                  const folderPlaylists = playlists.filter((playlist) => playlist.folderId === folder.id);
-                  const collageCovers = folderPlaylists
-                    .map((playlist) => {
-                      const firstTrackId = playlist.trackIds.find((trackId) => tracksById.has(trackId));
-
-                      return (
-                        playlistCoverSource(playlist, playlistCoverUrlsById) ||
-                        trackMetadataById[firstTrackId || ""]?.coverDataUrl ||
-                        null
-                      );
-                    })
-                    .filter((cover): cover is string => Boolean(cover))
-                    .slice(0, 4);
-
-                  return (
-                    <div key={folder.id} className="group">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedFolderId(folder.id)}
-                        className="grid aspect-square w-full grid-cols-2 gap-1 overflow-hidden rounded-[18px] bg-[var(--app-glass)] p-2 text-left backdrop-blur transition hover:bg-[var(--app-glass-strong)]"
-                      >
-                        {Array.from({ length: 4 }).map((_, index) =>
-                          collageCovers[index] ? (
-                            <img
-                              key={`${folder.id}-${index}`}
-                              src={collageCovers[index]}
-                              alt=""
-                              className="h-full w-full rounded-md object-cover"
-                            />
-                          ) : (
-                            <span
-                              key={`${folder.id}-${index}`}
-                              className="rounded-md bg-white/[0.06]"
-                            />
-                          )
-                        )}
-                      </button>
-                      <div className="mt-3 flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedFolderId(folder.id)}
-                            className="block truncate text-left text-sm font-semibold uppercase tracking-wide text-white"
-                          >
-                            {folder.name}
-                          </button>
-                          <p className="text-sm text-[var(--app-muted)]">{formatCount(folderPlaylists.length)}</p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
 
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {visiblePlaylists
@@ -1978,14 +1655,7 @@ export default function LibraryScreen({ playlistId }: Props) {
                   return (
                     <div
                       key={playlist.id}
-                      draggable={!isBuiltInPlaylist}
-                      onDragStart={() => !isBuiltInPlaylist && setDraggedPlaylistId(playlist.id)}
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={() => !isBuiltInPlaylist && groupPlaylistsIntoFolder(playlist.id)}
-                      onDragEnd={() => setDraggedPlaylistId(null)}
                       className={`app-card relative p-3 ${
-                        draggedPlaylistId === playlist.id ? "opacity-45" : ""
-                      } ${
                         openPlaylistMenuId === playlist.id ? "z-40" : ""
                       }`}
                     >
@@ -2039,9 +1709,9 @@ export default function LibraryScreen({ playlistId }: Props) {
                 })}
             </div>
 
-            {visiblePlaylists.length === 0 && (selectedFolderId || visibleFolders.length === 0) ? (
+            {visiblePlaylists.length === 0 ? (
               <div className="mt-8 rounded-lg border border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">
-                {selectedFolderId ? "No playlists in this folder." : "No playlists yet."}
+                No playlists yet.
               </div>
             ) : null}
           </div>

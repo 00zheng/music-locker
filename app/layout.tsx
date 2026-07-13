@@ -6,7 +6,7 @@ import PlayerBridge from "@/components/PlayerBridge";
 
 export const metadata: Metadata = {
   title: "Music Locker",
-  description: "Self-hosted music bank with playlists, playback, and profiles.",
+  description: "Self-hosted music bank with playlists, playback, and settings.",
 };
 
 export const viewport: Viewport = {

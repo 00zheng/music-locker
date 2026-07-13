@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import Image from "next/image";
 import { supabase } from "@/lib/supabase";
 import {
   USER_PREFERENCES_UPDATED_EVENT,
@@ -29,7 +28,7 @@ type BaseSearchResult = {
   label: string;
   detail: string;
   href: string;
-  icon: "library" | "profile" | "settings" | "playlist" | "music";
+  icon: "library" | "settings" | "playlist" | "music";
 };
 
 type LinkSearchResult = BaseSearchResult & {
@@ -88,7 +87,6 @@ function NavIcon({
     | "library"
     | "music"
     | "playlist"
-    | "profile"
     | "search"
     | "settings";
   className?: string;
@@ -129,12 +127,6 @@ function NavIcon({
         <path d="m17 15 4 2-4 2v-4Z" />
       </>
     ),
-    profile: (
-      <>
-        <circle cx="12" cy="8" r="4" />
-        <path d="M4 21a8 8 0 0 1 16 0" />
-      </>
-    ),
     search: (
       <>
         <circle cx="11" cy="11" r="7" />
@@ -168,13 +160,11 @@ function NavIcon({
 export default function Navbar() {
   const router = useRouter();
   const pathname = usePathname();
-  const [username, setUsername] = useState("");
-  const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null);
   const [playlists, setPlaylistsState] = useState<Playlist[]>([]);
   const [playlistCoverUrlsById, setPlaylistCoverUrlsById] = useState<PlaylistCoverUrlsById>({});
   const [trackMetadataById, setTrackMetadataById] = useState<TrackMetadataById>({});
   const [tracks, setTracks] = useState<SearchTrack[]>([]);
-  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -207,8 +197,6 @@ export default function Navbar() {
           return;
         }
 
-        setUsername(preferences.profile.username || "");
-        setAvatarDataUrl(preferences.profile.avatarDataUrl || null);
         setPlaylistsState(preferences.playlists);
         setPlaylistCoverUrlsById(signedCoverUrlsById);
         setTrackMetadataById(preferences.trackMetadata);
@@ -286,23 +274,15 @@ export default function Navbar() {
       {
         id: "route-library",
         label: "Library",
-        detail: "Playlists and folders",
+        detail: "Playlists and songs",
         href: "/library",
         icon: "library",
         kind: "link",
       },
       {
-        id: "route-profile",
-        label: "Account",
-        detail: "Profile, storage, password, display",
-        href: "/settings",
-        icon: "profile",
-        kind: "link",
-      },
-      {
         id: "route-settings",
         label: "Settings",
-        detail: "Theme and app preferences",
+        detail: "Storage, appearance, password",
         href: "/settings",
         icon: "settings",
         kind: "link",
@@ -418,8 +398,8 @@ export default function Navbar() {
         <div className="relative flex items-center gap-2">
           <Link
             href="/library"
-            className={`flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.08] transition hover:bg-white/[0.12] ${
-              pathname === "/library" ? "text-white" : "text-[var(--app-muted)]"
+            className={`flex h-11 w-11 items-center justify-center rounded-full text-white transition hover:bg-white/[0.12] active:text-white ${
+              pathname.startsWith("/library") ? "bg-white/[0.16]" : "bg-white/[0.08]"
             }`}
             aria-label="Library"
             title="Library"
@@ -430,55 +410,60 @@ export default function Navbar() {
           <button
             type="button"
             onClick={() => {
-              setIsProfileMenuOpen((current) => !current);
+              setIsSettingsMenuOpen((current) => !current);
               setIsSearchOpen(false);
             }}
-            className={`flex h-11 w-11 items-center justify-center overflow-hidden rounded-full bg-white/[0.08] transition hover:bg-white/[0.12] ${
-              pathname === "/settings" ? "text-white" : "text-[var(--app-muted)]"
+            className={`flex h-11 w-11 items-center justify-center rounded-full text-white transition hover:bg-white/[0.12] active:text-white ${
+              pathname === "/settings" ? "bg-white/[0.16]" : "bg-white/[0.08]"
             }`}
-            aria-label="Account menu"
-            title="Account"
+            aria-label="Settings menu"
+            title="Settings"
           >
-            {avatarDataUrl ? (
-              <Image
-                src={avatarDataUrl}
-                alt="Profile avatar"
-                width={44}
-                height={44}
-                unoptimized
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <NavIcon name="profile" />
-            )}
+            <NavIcon name="settings" />
           </button>
 
           <button
             type="button"
             onClick={() => {
               setIsSearchOpen(true);
-              setIsProfileMenuOpen(false);
+              setIsSettingsMenuOpen(false);
             }}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.08] text-white transition hover:bg-white/[0.12]"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.08] text-white transition hover:bg-white/[0.12] active:text-white"
             aria-label="Universal search"
             title="Search"
           >
             <NavIcon name="search" />
           </button>
 
-          {isProfileMenuOpen ? (
-              <div className="absolute right-0 top-14 z-[110] w-64 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[rgba(24,24,24,0.74)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+          {isSettingsMenuOpen ? (
+              <div className="absolute right-0 top-14 z-[110] w-72 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
               <div className="border-b border-white/[0.08] px-4 py-3">
-                <p className="truncate text-sm font-semibold text-white">{username || "Profile"}</p>
-                <p className="truncate text-xs text-[var(--app-muted)]">Account</p>
+                <p className="truncate text-sm font-semibold text-white">Settings</p>
+                <p className="truncate text-xs text-[var(--app-muted)]">Storage, appearance, password</p>
               </div>
               <Link
-                href="/settings"
-                onClick={() => setIsProfileMenuOpen(false)}
+                href="/settings#storage"
+                onClick={() => setIsSettingsMenuOpen(false)}
                 className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--app-text)] hover:bg-white/[0.08]"
               >
-                <NavIcon name="profile" />
-                Account settings
+                <NavIcon name="library" />
+                Storage
+              </Link>
+              <Link
+                href="/settings#appearance"
+                onClick={() => setIsSettingsMenuOpen(false)}
+                className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--app-text)] hover:bg-white/[0.08]"
+              >
+                <NavIcon name="settings" />
+                Light / dark mode
+              </Link>
+              <Link
+                href="/settings#password"
+                onClick={() => setIsSettingsMenuOpen(false)}
+                className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--app-text)] hover:bg-white/[0.08]"
+              >
+                <NavIcon name="settings" />
+                Change password
               </Link>
               <div className="border-t border-white/[0.08] p-3">
                 <LogoutButton />

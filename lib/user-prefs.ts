@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type ThemeId = "nocturne" | "sunset" | "ocean" | "forest";
+export type ThemeId = "nocturne" | "sunset" | "ocean" | "forest" | "light";
 
 export type AppThemePreferences = {
   themeId: ThemeId;
