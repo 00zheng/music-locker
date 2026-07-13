@@ -76,6 +76,7 @@ type QueueDragState = {
 const PLAY_EVENT = "music-locker:play-track";
 const APPEND_EVENT = "music-locker:append-track-queue";
 export const CURRENT_TRACK_EVENT = "music-locker:current-track";
+let currentTrackIdSnapshot: string | null = null;
 const APP_ICON_ARTWORK = [
   { src: "/icon-192x192.png", sizes: "192x192", type: "image/png" },
   { src: "/icon-512x512.png", sizes: "512x512", type: "image/png" },
@@ -341,11 +342,16 @@ export function dispatchAppendQueue(tracks: PlayerTrack[]) {
 }
 
 function dispatchCurrentTrack(trackId: string | null) {
+  currentTrackIdSnapshot = trackId;
   window.dispatchEvent(
     new CustomEvent(CURRENT_TRACK_EVENT, {
       detail: { trackId },
     })
   );
+}
+
+export function getCurrentTrackId() {
+  return currentTrackIdSnapshot;
 }
 
 function isTextEntryTarget(target: EventTarget | null) {
@@ -485,6 +491,22 @@ export default function PlayerBridge() {
       setIsPlaying(false);
     });
   }, []);
+
+  const restartCurrentAudio = useCallback(() => {
+    const audio = audioRef.current;
+
+    if (!audio || !track) {
+      return false;
+    }
+
+    audio.currentTime = 0;
+    lastProgressRenderAtRef.current = 0;
+    setCurrentTime(0);
+    dispatchCurrentTrack(track.id);
+    requestAudioPlay(audio);
+
+    return true;
+  }, [requestAudioPlay, track]);
 
   const seekTo = useCallback((value: number) => {
     const audio = audioRef.current;
@@ -703,6 +725,20 @@ export default function PlayerBridge() {
   useEffect(() => {
     const audio = audioRef.current;
 
+    if (!audio) {
+      return;
+    }
+
+    audio.loop = isRepeatOneOn;
+
+    return () => {
+      audio.loop = false;
+    };
+  }, [isRepeatOneOn]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+
     if (!audio || !track) {
       return;
     }
@@ -808,15 +844,7 @@ export default function PlayerBridge() {
     }
 
     if (isRepeatOneOn) {
-      const audio = audioRef.current;
-
-      if (audio) {
-        audio.currentTime = 0;
-        setCurrentTime(0);
-        requestAudioPlay(audio);
-      }
-
-      return true;
+      return restartCurrentAudio();
     }
 
     const nextManualEntry = manualQueue[0];
@@ -857,7 +885,7 @@ export default function PlayerBridge() {
     isShuffleOn,
     manualQueue,
     createQueueEntries,
-    requestAudioPlay,
+    restartCurrentAudio,
     startTrack,
     track,
   ]);

@@ -20,6 +20,7 @@ import {
   CURRENT_TRACK_EVENT,
   dispatchAppendQueue,
   dispatchPlayQueue,
+  getCurrentTrackId,
 } from "@/components/PlayerBridge";
 
 type Track = {
@@ -438,7 +439,7 @@ export default function LibraryScreen() {
   const [renamingTrackId, setRenamingTrackId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [draggedTrackId, setDraggedTrackId] = useState<string | null>(null);
-  const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
+  const [currentTrackId, setCurrentTrackId] = useState<string | null>(() => getCurrentTrackId());
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [lastSelectedTrackId, setLastSelectedTrackId] = useState<string | null>(null);
   const [isDeletingTracks, setIsDeletingTracks] = useState(false);

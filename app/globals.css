@@ -42,6 +42,8 @@ html[data-theme="nocturne"] {
   --app-glass: rgba(255, 255, 255, 0.065);
   --app-glass-strong: rgba(255, 255, 255, 0.105);
   --app-input-bg: rgba(10, 10, 10, 0.36);
+  --app-playing-bg: rgba(34, 197, 94, 0.1);
+  --app-playing-text: #86efac;
   --app-range-track: rgba(255, 255, 255, 0.16);
   --app-gradient: linear-gradient(180deg, #111111 0%, #0b0b0b 100%);
 }
@@ -58,6 +60,8 @@ html[data-theme="sunset"] {
   --app-glass: rgba(255, 255, 255, 0.09);
   --app-glass-strong: rgba(255, 255, 255, 0.14);
   --app-input-bg: rgba(10, 10, 10, 0.36);
+  --app-playing-bg: rgba(34, 197, 94, 0.1);
+  --app-playing-text: #86efac;
   --app-range-track: rgba(255, 255, 255, 0.18);
   --app-gradient: linear-gradient(180deg, #242424 0%, #101010 100%);
 }
@@ -74,6 +78,8 @@ html[data-theme="ocean"] {
   --app-glass: rgba(154, 217, 215, 0.09);
   --app-glass-strong: rgba(154, 217, 215, 0.14);
   --app-input-bg: rgba(10, 10, 10, 0.36);
+  --app-playing-bg: rgba(34, 197, 94, 0.1);
+  --app-playing-text: #86efac;
   --app-range-track: rgba(169, 230, 232, 0.18);
   --app-gradient: linear-gradient(180deg, #0d2223 0%, #061010 100%);
 }
@@ -90,6 +96,8 @@ html[data-theme="forest"] {
   --app-glass: rgba(171, 216, 177, 0.09);
   --app-glass-strong: rgba(171, 216, 177, 0.14);
   --app-input-bg: rgba(10, 10, 10, 0.36);
+  --app-playing-bg: rgba(34, 197, 94, 0.1);
+  --app-playing-text: #86efac;
   --app-range-track: rgba(186, 231, 194, 0.18);
   --app-gradient: linear-gradient(180deg, #152319 0%, #080f09 100%);
 }
