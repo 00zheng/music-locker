@@ -139,6 +139,31 @@ function setMediaSessionAction(
   }
 }
 
+function setMediaSessionTrackMetadata(track: PlayerTrack | null) {
+  const mediaSession = getMediaSession();
+
+  if (!mediaSession) {
+    return;
+  }
+
+  mediaSession.metadata = null;
+
+  if (!track || typeof MediaMetadata === "undefined") {
+    return;
+  }
+
+  try {
+    mediaSession.metadata = new MediaMetadata({
+      title: track.title || "Music Locker",
+      artist: track.artist || "Unknown artist",
+      album: "Music Locker",
+      artwork: artworkForTrack(track),
+    });
+  } catch {
+    mediaSession.metadata = null;
+  }
+}
+
 function shuffleIndexes(indexes: number[]) {
   const shuffled = [...indexes];
 
@@ -400,6 +425,10 @@ export default function PlayerBridge() {
   const queueTouchActionBeforeDragRef = useRef<string | null>(null);
   const queueOverflowYBeforeDragRef = useRef<string | null>(null);
   const queueTouchMoveBlockerActiveRef = useRef(false);
+  const playRetryTimeoutRef = useRef<number | null>(null);
+  const playRequestIdRef = useRef(0);
+  const wantsPlaybackRef = useRef(false);
+  const endedHandledRef = useRef(false);
   const [currentTrack, setCurrentTrack] = useState<PlayerTrack | null>(null);
   const [manualQueue, setManualQueue] = useState<QueueEntry[]>([]);
   const [contextQueue, setContextQueue] = useState<QueueEntry[]>([]);
@@ -482,15 +511,61 @@ export default function PlayerBridge() {
     lastProgressRenderAtRef.current = 0;
   }, []);
 
+  const clearPlayRetryTimeout = useCallback(() => {
+    if (playRetryTimeoutRef.current === null) {
+      return;
+    }
+
+    window.clearTimeout(playRetryTimeoutRef.current);
+    playRetryTimeoutRef.current = null;
+  }, []);
+
+  const cancelPendingAudioPlay = useCallback(() => {
+    playRequestIdRef.current += 1;
+    clearPlayRetryTimeout();
+  }, [clearPlayRetryTimeout]);
+
   const requestAudioPlay = useCallback((audio: HTMLAudioElement) => {
-    void audio.play().catch((error) => {
-      if (error instanceof Error && error.name === "AbortError") {
+    const requestId = playRequestIdRef.current + 1;
+
+    playRequestIdRef.current = requestId;
+    wantsPlaybackRef.current = true;
+    clearPlayRetryTimeout();
+
+    const play = (attempt: number) => {
+      if (
+        playRequestIdRef.current !== requestId ||
+        audioRef.current !== audio ||
+        !wantsPlaybackRef.current ||
+        !audio.src
+      ) {
         return;
       }
 
-      setIsPlaying(false);
-    });
-  }, []);
+      void audio.play().catch((error) => {
+        if (
+          playRequestIdRef.current !== requestId ||
+          audioRef.current !== audio ||
+          !wantsPlaybackRef.current
+        ) {
+          return;
+        }
+
+        if (error instanceof Error && error.name === "AbortError" && attempt < 2) {
+          playRetryTimeoutRef.current = window.setTimeout(() => play(attempt + 1), 150);
+          return;
+        }
+
+        setIsPlaying(false);
+      });
+    };
+
+    play(0);
+  }, [clearPlayRetryTimeout]);
+
+  useEffect(() => () => {
+    cancelPendingAudioPlay();
+  }, [cancelPendingAudioPlay]);
 
   const restartCurrentAudio = useCallback(() => {
     const audio = audioRef.current;
@@ -500,6 +575,7 @@ export default function PlayerBridge() {
     }
 
     audio.currentTime = 0;
+    endedHandledRef.current = false;
     lastProgressRenderAtRef.current = 0;
     setCurrentTime(0);
     dispatchCurrentTrack(track.id);
@@ -517,6 +593,10 @@ export default function PlayerBridge() {
 
     if (audio) {
       audio.currentTime = nextTime;
+    }
+
+    if (audioDuration <= 0 || nextTime < audioDuration - 0.5) {
+      endedHandledRef.current = false;
     }
 
     lastProgressRenderAtRef.current = performance.now();
@@ -743,13 +823,17 @@ export default function PlayerBridge() {
       return;
     }
 
+    cancelPendingAudioPlay();
+    endedHandledRef.current = false;
+    setMediaSessionTrackMetadata(track);
     audio.src = track.audioUrl;
     audio.currentTime = 0;
+    audio.load();
     lastProgressRenderAtRef.current = 0;
     dispatchCurrentTrack(track.id);
 
     requestAudioPlay(audio);
-  }, [requestAudioPlay, track]);
+  }, [cancelPendingAudioPlay, requestAudioPlay, track]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -759,15 +843,19 @@ export default function PlayerBridge() {
     }
 
     if (isPlaying) {
+      wantsPlaybackRef.current = true;
+
       if (track) {
         dispatchCurrentTrack(track.id);
       }
 
       requestAudioPlay(audio);
     } else {
+      wantsPlaybackRef.current = false;
+      cancelPendingAudioPlay();
       audio.pause();
     }
-  }, [isPlaying, requestAudioPlay, track]);
+  }, [cancelPendingAudioPlay, isPlaying, requestAudioPlay, track]);
 
   useEffect(() => {
     function seekBy(seconds: number) {
@@ -895,13 +983,20 @@ export default function PlayerBridge() {
   }, [moveToNextTrack]);
 
   const handleEnded = useCallback(() => {
+    if (endedHandledRef.current) {
+      return;
+    }
+
+    endedHandledRef.current = true;
+    cancelPendingAudioPlay();
+
     if (moveToNextTrack()) {
       return;
     }
 
     setIsPlaying(false);
     dispatchCurrentTrack(null);
-  }, [moveToNextTrack]);
+  }, [cancelPendingAudioPlay, moveToNextTrack]);
 
   useEffect(() => {
     const mediaSession = getMediaSession();
@@ -911,24 +1006,13 @@ export default function PlayerBridge() {
     }
 
     if (!track) {
-      mediaSession.metadata = null;
+      setMediaSessionTrackMetadata(null);
       mediaSession.playbackState = "none";
       MEDIA_SESSION_ACTIONS.forEach((action) => setMediaSessionAction(action, null));
       return;
     }
 
-    if (typeof MediaMetadata !== "undefined") {
-      try {
-        mediaSession.metadata = new MediaMetadata({
-          title: track.title || "Music Locker",
-          artist: track.artist || "Unknown artist",
-          album: "Music Locker",
-          artwork: artworkForTrack(track),
-        });
-      } catch {
-        mediaSession.metadata = null;
-      }
-    }
+    setMediaSessionTrackMetadata(track);
 
     setMediaSessionAction("play", () => setIsPlaying(true));
     setMediaSessionAction("pause", () => setIsPlaying(false));
@@ -944,7 +1028,7 @@ export default function PlayerBridge() {
     setMediaSessionAction("stop", () => setIsPlaying(false));
 
     return () => {
-      mediaSession.metadata = null;
+      setMediaSessionTrackMetadata(null);
       MEDIA_SESSION_ACTIONS.forEach((action) => setMediaSessionAction(action, null));
     };
   }, [canPlayNext, playNext, playPrevious, seekTo, track]);
@@ -1817,22 +1901,44 @@ export default function PlayerBridge() {
         onTimeUpdate={() => {
           const audio = audioRef.current;
           if (!audio) return;
+          const audioDuration =
+            Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : duration;
           const now = performance.now();
           const shouldRenderProgress =
             now - lastProgressRenderAtRef.current > 250 ||
-            Math.abs((duration || 0) - audio.currentTime) < 0.25;
+            Math.abs((audioDuration || 0) - audio.currentTime) < 0.25;
 
           if (!shouldRenderProgress) {
             return;
           }
 
           lastProgressRenderAtRef.current = now;
-          setCurrentTime(audio.currentTime);
+          setCurrentTime(audioDuration > 0 ? Math.min(audio.currentTime, audioDuration) : audio.currentTime);
+
+          if (
+            !isRepeatOneOn &&
+            audioDuration > 0 &&
+            (audio.ended || audio.currentTime >= audioDuration - 0.05)
+          ) {
+            setCurrentTime(audioDuration);
+            handleEnded();
+          }
         }}
         onLoadedMetadata={() => {
           const audio = audioRef.current;
           if (!audio) return;
+          endedHandledRef.current = false;
           setDuration(audio.duration || 0);
+        }}
+        onDurationChange={() => {
+          const audio = audioRef.current;
+          if (!audio) return;
+          setDuration(audio.duration || 0);
+        }}
+        onPause={() => {
+          const audio = audioRef.current;
+          if (!audio?.ended || isRepeatOneOn) return;
+          handleEnded();
         }}
         onEnded={handleEnded}
         hidden
