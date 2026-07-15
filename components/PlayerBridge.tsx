@@ -14,21 +14,13 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-
-type PlayerTrack = {
-  id: string;
-  title: string;
-  artist: string;
-  coverDataUrl?: string | null;
-  audioUrl: string;
-  sourceHref?: string;
-  sourceLabel?: string;
-};
-
-type PlayerRequest = {
-  tracks: PlayerTrack[];
-  startIndex: number;
-};
+import {
+  APPEND_EVENT,
+  PLAY_EVENT,
+  dispatchCurrentTrack,
+  type PlayerRequest,
+  type PlayerTrack,
+} from "@/components/player-events";
 
 type RepeatMode = "none" | "all" | "one";
 type QueueSource = "current" | "manual" | "context";
@@ -73,10 +65,6 @@ type QueueDragState = {
   track: PlayerTrack;
 };
 
-const PLAY_EVENT = "music-locker:play-track";
-const APPEND_EVENT = "music-locker:append-track-queue";
-export const CURRENT_TRACK_EVENT = "music-locker:current-track";
-let currentTrackIdSnapshot: string | null = null;
 const APP_ICON_ARTWORK = [
   { src: "/icon-192x192.png", sizes: "192x192", type: "image/png" },
   { src: "/icon-512x512.png", sizes: "512x512", type: "image/png" },
@@ -335,48 +323,6 @@ function PlayerIcon({
       {paths[name]}
     </svg>
   );
-}
-
-export function dispatchPlayQueue(tracks: PlayerTrack[], startIndex: number) {
-  if (tracks.length === 0) {
-    return;
-  }
-
-  window.dispatchEvent(
-    new CustomEvent<PlayerRequest>(PLAY_EVENT, {
-      detail: {
-        tracks,
-        startIndex: Math.min(Math.max(startIndex, 0), tracks.length - 1),
-      },
-    })
-  );
-}
-
-export function dispatchAppendQueue(tracks: PlayerTrack[]) {
-  if (tracks.length === 0) {
-    return;
-  }
-
-  window.dispatchEvent(
-    new CustomEvent<Pick<PlayerRequest, "tracks">>(APPEND_EVENT, {
-      detail: {
-        tracks,
-      },
-    })
-  );
-}
-
-function dispatchCurrentTrack(trackId: string | null) {
-  currentTrackIdSnapshot = trackId;
-  window.dispatchEvent(
-    new CustomEvent(CURRENT_TRACK_EVENT, {
-      detail: { trackId },
-    })
-  );
-}
-
-export function getCurrentTrackId() {
-  return currentTrackIdSnapshot;
 }
 
 function isTextEntryTarget(target: EventTarget | null) {
@@ -1947,7 +1893,7 @@ export default function PlayerBridge() {
       {track ? (
         <>
           {isExpandedPlayerOpen ? (
-            <div className="fixed inset-0 z-[300] bg-[var(--app-bg)] px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] text-[var(--app-text)] sm:hidden">
+            <div className="app-player-expanded fixed inset-0 z-[300] bg-[var(--app-bg)] px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] text-[var(--app-text)] sm:hidden">
               <div className="mx-auto flex h-full max-w-md flex-col">
                 <div className="flex h-14 items-center justify-between">
                   <div className="h-1.5 w-12 rounded-full bg-[var(--app-glass-strong)]" aria-hidden="true" />
@@ -2077,7 +2023,7 @@ export default function PlayerBridge() {
               : null}
 
             <div
-              className="mx-auto flex max-w-5xl flex-wrap items-center gap-2 rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-soft)] px-2 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl sm:flex-nowrap sm:gap-3 sm:rounded-full sm:px-3"
+              className="app-player-bar mx-auto flex max-w-5xl flex-wrap items-center gap-2 rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg-soft)] px-2 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl sm:flex-nowrap sm:gap-3 sm:rounded-full sm:px-3"
             >
               <button
                 type="button"

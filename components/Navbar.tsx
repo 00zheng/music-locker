@@ -10,9 +10,9 @@ import {
   type Playlist,
   type TrackMetadataById,
 } from "@/lib/user-prefs";
-import { dispatchPlayQueue } from "@/components/PlayerBridge";
+import { dispatchPlayQueue } from "@/components/player-events";
 
-const NAVBAR_REFRESH_INTERVAL_MS = 15000;
+const NAVBAR_REFRESH_INTERVAL_MS = 60000;
 const PLAYLIST_COVER_SIGNED_URL_SECONDS = 60 * 60;
 
 type SearchTrack = {
@@ -164,21 +164,38 @@ export default function Navbar() {
   const [trackMetadataById, setTrackMetadataById] = useState<TrackMetadataById>({});
   const [tracks, setTracks] = useState<SearchTrack[]>([]);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isSearchLoading, setIsSearchLoading] = useState(false);
+  const [hasLoadedSearchData, setHasLoadedSearchData] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const shouldSyncSearchData = isSearchOpen || hasLoadedSearchData;
 
   useEffect(() => {
+    if (!shouldSyncSearchData) {
+      return;
+    }
+
     let isMounted = true;
     let isLoading = false;
     let realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
 
     async function loadNavbarData() {
-      if (isLoading || document.visibilityState !== "visible" || !navigator.onLine) {
+      if (isLoading || document.visibilityState !== "visible") {
+        return;
+      }
+
+      if (!navigator.onLine) {
+        setIsSearchLoading(false);
+        setHasLoadedSearchData(true);
         return;
       }
 
       isLoading = true;
 
       try {
+        if (isMounted) {
+          setIsSearchLoading(true);
+        }
+
         const { data } = await supabase.auth.getSession();
         const userId = data.session?.user?.id;
 
@@ -207,6 +224,7 @@ export default function Navbar() {
 
         if (isMounted) {
           setTracks((trackData || []) as SearchTrack[]);
+          setHasLoadedSearchData(true);
         }
 
         if (!realtimeChannel) {
@@ -236,6 +254,10 @@ export default function Navbar() {
         }
       } finally {
         isLoading = false;
+
+        if (isMounted) {
+          setIsSearchLoading(false);
+        }
       }
     }
 
@@ -264,10 +286,28 @@ export default function Navbar() {
         void supabase.removeChannel(realtimeChannel);
       }
     };
-  }, []);
+  }, [shouldSyncSearchData]);
+
+  const playlistByTrackId = useMemo(() => {
+    const nextPlaylistByTrackId = new Map<string, Playlist>();
+
+    playlists.forEach((playlist) => {
+      playlist.trackIds.forEach((trackId) => {
+        if (!nextPlaylistByTrackId.has(trackId)) {
+          nextPlaylistByTrackId.set(trackId, playlist);
+        }
+      });
+    });
+
+    return nextPlaylistByTrackId;
+  }, [playlists]);
 
   const searchResults = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    if (!isSearchOpen) {
+      return [];
+    }
+
+    const query = normalizeSearchValue(searchQuery);
     const staticResults: SearchResult[] = [
       {
         id: "route-library",
@@ -300,7 +340,7 @@ export default function Navbar() {
     const trackResults: SearchResult[] = [];
 
     tracks.forEach((track) => {
-      const parentPlaylist = playlists.find((playlist) => playlist.trackIds.includes(track.id));
+      const parentPlaylist = playlistByTrackId.get(track.id);
       const metadata = trackMetadataById[track.id];
       const title = metadata?.title || track.title;
       const artist = metadata?.artist || track.artist || parentPlaylist?.name || "Unknown artist";
@@ -334,7 +374,7 @@ export default function Navbar() {
     return results
       .filter((result) => `${result.label} ${result.detail}`.toLowerCase().includes(query))
       .slice(0, 12);
-  }, [playlistCoverUrlsById, playlists, searchQuery, trackMetadataById, tracks]);
+  }, [isSearchOpen, playlistByTrackId, playlistCoverUrlsById, playlists, searchQuery, trackMetadataById, tracks]);
 
   async function playSearchTrack(result: TrackSearchResult) {
     setIsSearchOpen(false);
@@ -388,7 +428,7 @@ export default function Navbar() {
     <nav className="relative z-[100] w-full border-b border-[var(--app-border)] bg-[var(--app-bg-soft)] backdrop-blur-xl">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-2">
-          <Link href="/library" className="truncate text-lg font-semibold tracking-tight text-[var(--app-text)]">
+          <Link href="/library" className="truncate text-lg font-semibold text-[var(--app-text)]">
             music-locker
           </Link>
         </div>
@@ -419,6 +459,10 @@ export default function Navbar() {
           <button
             type="button"
             onClick={() => {
+              if (!hasLoadedSearchData) {
+                setIsSearchLoading(true);
+              }
+
               setIsSearchOpen(true);
             }}
             className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--app-glass)] text-[var(--app-text)] transition hover:bg-[var(--app-glass-strong)] active:text-[var(--app-text)]"
@@ -434,14 +478,14 @@ export default function Navbar() {
     </nav>
 
     {isSearchOpen ? (
-        <div className="fixed inset-0 z-[200] bg-black/35 px-4 py-5 backdrop-blur-sm sm:py-12">
+        <div className="app-search-overlay fixed inset-0 z-[200] bg-black/35 px-4 py-5 backdrop-blur-sm sm:py-12">
           <button
             type="button"
             className="absolute inset-0 cursor-default"
             aria-label="Close search"
             onClick={() => setIsSearchOpen(false)}
           />
-          <div className="relative mx-auto max-w-2xl overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-[0_24px_90px_rgba(0,0,0,0.2)]">
+          <div className="app-search-panel relative mx-auto max-w-2xl overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] shadow-[0_24px_90px_rgba(0,0,0,0.2)]">
             <div className="flex items-center gap-3 border-b border-[var(--app-border)] px-4 py-3">
               <NavIcon name="search" className="h-5 w-5 text-[var(--app-muted)]" />
               <input
@@ -463,6 +507,12 @@ export default function Navbar() {
             </div>
 
             <div className="max-h-[65vh] overflow-y-auto p-2">
+              {isSearchLoading && searchResults.length === 0 ? (
+                <div className="px-3 py-8 text-center text-sm text-[var(--app-muted)]">
+                  Loading library...
+                </div>
+              ) : null}
+
               {searchResults.map((result) =>
                 result.kind === "track" ? (
                   <button
@@ -497,7 +547,7 @@ export default function Navbar() {
                 )
               )}
 
-              {searchResults.length === 0 ? (
+              {!isSearchLoading && searchResults.length === 0 ? (
                 <div className="px-3 py-8 text-center text-sm text-[var(--app-muted)]">
                   No results found.
                 </div>

@@ -190,7 +190,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <main className="app-shell min-h-screen text-[var(--app-text)]">
+    <main className="app-shell app-page-enter min-h-screen text-[var(--app-text)]">
       <Navbar />
 
       <section className="app-content px-6 py-10">

@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import RegisterServiceWorker from "@/components/RegisterServiceWorker";
 import ThemeBoot from "@/components/ThemeBoot";
-import PlayerBridge from "@/components/PlayerBridge";
+import DeferredPlayerBridge from "@/components/DeferredPlayerBridge";
 
 export const metadata: Metadata = {
   title: "Music Locker",
@@ -27,7 +27,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <RegisterServiceWorker />
         <ThemeBoot />
-        <PlayerBridge />
+        <DeferredPlayerBridge />
         {children}
       </body>
     </html>

@@ -21,7 +21,7 @@ import {
   dispatchAppendQueue,
   dispatchPlayQueue,
   getCurrentTrackId,
-} from "@/components/PlayerBridge";
+} from "@/components/player-events";
 
 type Track = {
   id: string;
@@ -32,6 +32,7 @@ type Track = {
   file_size: number | null;
   created_at: string;
   signedUrl?: string;
+  signedUrlExpiresAt?: number;
   offlineUrl?: string;
   isOfflineAvailable?: boolean;
   offlineOnly?: boolean;
@@ -55,6 +56,8 @@ const TRACKS_REFRESH_INTERVAL_MS = 30000;
 const PLAYLIST_COVER_SIZE = 800;
 const PLAYLIST_COVER_QUALITY = 0.82;
 const PLAYLIST_COVER_SIGNED_URL_SECONDS = 60 * 60;
+const TRACK_SIGNED_URL_SECONDS = 60 * 60;
+const SIGNED_URL_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
 type LoadDataOptions = {
   showLoading?: boolean;
@@ -149,6 +152,14 @@ async function getCachedAudioUrl(trackId: string) {
 
 function playlistCoverStoragePath(userId: string, playlistId: string) {
   return `${userId}/.music-locker/playlist-covers/${playlistId}-${Date.now()}.jpg`;
+}
+
+function hasFreshSignedUrl(track: Track) {
+  return Boolean(
+    track.signedUrl &&
+      track.signedUrlExpiresAt &&
+      track.signedUrlExpiresAt > Date.now() + SIGNED_URL_REFRESH_WINDOW_MS
+  );
 }
 
 function playlistCoverSource(playlist: Playlist | null | undefined, signedUrlsById: PlaylistCoverUrlsById) {
@@ -366,11 +377,11 @@ function ActionSheet({
       role="dialog"
       aria-modal="true"
       aria-label={label}
-      className="fixed inset-0 z-[1200] flex items-end justify-center bg-black/55 px-3 backdrop-blur-sm sm:items-center sm:px-6"
+      className="app-sheet-backdrop fixed inset-0 z-[1200] flex items-end justify-center bg-black/55 px-3 backdrop-blur-sm sm:items-center sm:px-6"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg overflow-hidden rounded-t-[28px] border border-white/[0.08] bg-[rgba(24,24,24,0.98)] shadow-[0_28px_90px_rgba(0,0,0,0.68)] backdrop-blur-2xl sm:rounded-[28px]"
+        className="app-sheet-panel w-full max-w-lg overflow-hidden rounded-t-[28px] border border-white/[0.08] bg-[rgba(24,24,24,0.98)] shadow-[0_28px_90px_rgba(0,0,0,0.68)] backdrop-blur-2xl sm:rounded-[28px]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="max-h-[88svh] overflow-y-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 sm:px-5 sm:pb-5">
@@ -756,19 +767,7 @@ export default function LibraryScreen() {
         return;
       }
 
-      const tracksWithUrls = await Promise.all(
-        (data || []).map(async (track) => {
-          const { data: signedData, error: signedUrlError } = await supabase.storage
-            .from("music")
-            .createSignedUrl(track.storage_path, 60 * 60);
-
-          return {
-            ...track,
-            signedUrl: signedUrlError ? undefined : signedData?.signedUrl,
-          } as Track;
-        })
-      );
-      const tracksWithOfflineInfo = await attachOfflineInfo(tracksWithUrls);
+      const tracksWithOfflineInfo = await attachOfflineInfo((data || []) as Track[]);
 
       replaceTracks(tracksWithOfflineInfo);
       applySyncedPreferences(preferences, signedCoverUrlsById);
@@ -903,7 +902,7 @@ export default function LibraryScreen() {
       return;
     }
 
-    playTrackAtIndex(index);
+    void playTrackAtIndex(index);
   }
 
   async function deleteTracks(trackIds: string[]) {
@@ -1124,13 +1123,8 @@ export default function LibraryScreen() {
       if (insertedTrack?.id) {
         insertedIds.push(insertedTrack.id);
 
-        const { data: signedData, error: signedUrlError } = await supabase.storage
-          .from("music")
-          .createSignedUrl(insertedTrack.storage_path, 60 * 60);
-
         insertedTracks.push({
           ...insertedTrack,
-          signedUrl: signedUrlError ? undefined : signedData?.signedUrl,
           isOfflineAvailable: false,
         } as Track);
       }
@@ -1239,6 +1233,53 @@ export default function LibraryScreen() {
     };
   }
 
+  async function signTracksForPlayback(inputTracks: Track[]) {
+    if (!navigator.onLine) {
+      return inputTracks.filter((track) => Boolean(track.offlineUrl));
+    }
+
+    const signedTrackUpdates = new Map<string, Pick<Track, "signedUrl" | "signedUrlExpiresAt">>();
+
+    await Promise.all(
+      inputTracks.map(async (track) => {
+        if (track.offlineUrl || hasFreshSignedUrl(track) || !track.storage_path) {
+          return;
+        }
+
+        const { data, error } = await supabase.storage
+          .from("music")
+          .createSignedUrl(track.storage_path, TRACK_SIGNED_URL_SECONDS);
+
+        if (!error && data?.signedUrl) {
+          signedTrackUpdates.set(track.id, {
+            signedUrl: data.signedUrl,
+            signedUrlExpiresAt: Date.now() + TRACK_SIGNED_URL_SECONDS * 1000,
+          });
+        }
+      })
+    );
+
+    if (signedTrackUpdates.size > 0) {
+      setTracks((currentTracks) =>
+        currentTracks.map((track) => {
+          const update = signedTrackUpdates.get(track.id);
+
+          return update ? { ...track, ...update } : track;
+        })
+      );
+    }
+
+    return inputTracks.flatMap((track): Track[] => {
+      if (track.offlineUrl || hasFreshSignedUrl(track)) {
+        return [track];
+      }
+
+      const update = signedTrackUpdates.get(track.id);
+
+      return update ? [{ ...track, ...update }] : [];
+    });
+  }
+
   function tracksForPlaylist(playlist: Playlist) {
     return playlist.trackIds
       .map((trackId) => tracksById.get(trackId))
@@ -1249,12 +1290,12 @@ export default function LibraryScreen() {
     const playlistTracks = tracksForPlaylist(playlist);
 
     return navigator.onLine
-      ? playlistTracks.filter((track) => track.signedUrl || track.offlineUrl)
+      ? playlistTracks.filter((track) => track.offlineUrl || track.storage_path)
       : playlistTracks.filter((track) => track.offlineUrl);
   }
 
-  function playPlaylist(playlist: Playlist) {
-    const playableTracks = playableTracksForPlaylist(playlist);
+  async function playPlaylist(playlist: Playlist) {
+    const playableTracks = await signTracksForPlayback(playableTracksForPlaylist(playlist));
 
     if (playableTracks.length === 0) {
       setStatus("No playable tracks in this playlist.");
@@ -1265,8 +1306,8 @@ export default function LibraryScreen() {
     setOpenPlaylistMenuId(null);
   }
 
-  function addPlaylistToQueue(playlist: Playlist) {
-    const playableTracks = playableTracksForPlaylist(playlist);
+  async function addPlaylistToQueue(playlist: Playlist) {
+    const playableTracks = await signTracksForPlayback(playableTracksForPlaylist(playlist));
 
     if (playableTracks.length === 0) {
       setStatus("No playable tracks to add to queue.");
@@ -1278,7 +1319,7 @@ export default function LibraryScreen() {
     setOpenPlaylistMenuId(null);
   }
 
-  function addTrackToQueue(track: Track) {
+  async function addTrackToQueue(track: Track) {
     const displayTitle = trackMetadataById[track.id]?.title || track.title;
 
     if (!navigator.onLine && !track.offlineUrl) {
@@ -1287,9 +1328,10 @@ export default function LibraryScreen() {
       return;
     }
 
-    const queuedTrack = playerTrackFromTrack(track, activePlaylist);
+    const [playableTrack] = await signTracksForPlayback([track]);
+    const queuedTrack = playableTrack ? playerTrackFromTrack(playableTrack, activePlaylist) : null;
 
-    if (!queuedTrack.audioUrl) {
+    if (!queuedTrack?.audioUrl) {
       setStatus("Could not add this song because its playback link is missing.");
       setOpenTrackMenuId(null);
       return;
@@ -1300,7 +1342,7 @@ export default function LibraryScreen() {
     setOpenTrackMenuId(null);
   }
 
-  function playTrackAtIndex(index: number) {
+  async function playTrackAtIndex(index: number) {
     if (visibleTracks.length === 0) {
       return;
     }
@@ -1312,16 +1354,22 @@ export default function LibraryScreen() {
       return;
     }
 
-    const playableTracks = navigator.onLine
+    const candidateTracks = navigator.onLine
       ? visibleTracks
       : visibleTracks.filter((track) => track.offlineUrl);
+    const playableTracks = await signTracksForPlayback(candidateTracks);
     const startIndex = Math.max(0, playableTracks.findIndex((track) => track.id === selectedTrack?.id));
+
+    if (playableTracks.length === 0 || startIndex < 0) {
+      setStatus("No playable tracks are available.");
+      return;
+    }
 
     dispatchPlayQueue(playableTracks.map((track) => playerTrackFromTrack(track, activePlaylist)), startIndex);
   }
 
-  function playFirstTrack() {
-    playTrackAtIndex(0);
+  async function playFirstTrack() {
+    await playTrackAtIndex(0);
   }
 
   function removeTrackFromPlaylist(trackId: string) {
@@ -1434,7 +1482,9 @@ export default function LibraryScreen() {
       return;
     }
 
-    if (!track.signedUrl) {
+    const [downloadableTrack] = await signTracksForPlayback([track]);
+
+    if (!downloadableTrack?.signedUrl) {
       setStatus("Could not download this song because its playback link is missing.");
       setOpenTrackMenuId(null);
       return;
@@ -1450,7 +1500,7 @@ export default function LibraryScreen() {
     setStatus(`Downloading "${displayTitle}" for offline playback...`);
 
     try {
-      const response = await fetch(track.signedUrl);
+      const response = await fetch(downloadableTrack.signedUrl);
 
       if (!response.ok) {
         setStatus("Download failed. Please try again.");
@@ -1539,13 +1589,13 @@ export default function LibraryScreen() {
       </div>
 
       <div className="mt-3 space-y-1">
-        <ActionSheetButton icon="queue" onClick={() => addPlaylistToQueue(openPlaylistForMenu)}>
+        <ActionSheetButton icon="queue" onClick={() => void addPlaylistToQueue(openPlaylistForMenu)}>
           Add to queue
         </ActionSheetButton>
 
         {renamingPlaylistId === openPlaylistForMenu.id ? (
           <div className="rounded-2xl bg-white/[0.05] p-3">
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">
+            <label className="block text-xs font-semibold uppercase text-[var(--app-muted)]">
               Rename playlist
             </label>
             <input
@@ -1612,7 +1662,7 @@ export default function LibraryScreen() {
       </div>
 
       <div className="mt-4 rounded-2xl bg-white/[0.05] p-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Properties</p>
+        <p className="text-xs font-semibold uppercase text-[var(--app-muted)]">Properties</p>
         <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
           <dt className="text-[var(--app-muted)]">Date</dt>
           <dd className="min-w-0 truncate text-[var(--app-text)]">{formatTrackDate(openTrackForMenu.created_at) || "Unknown"}</dd>
@@ -1624,7 +1674,7 @@ export default function LibraryScreen() {
       </div>
 
       <div className="mt-3 space-y-1">
-        <ActionSheetButton icon="queue" onClick={() => addTrackToQueue(openTrackForMenu)}>
+        <ActionSheetButton icon="queue" onClick={() => void addTrackToQueue(openTrackForMenu)}>
           Add to queue
         </ActionSheetButton>
         <ActionSheetButton icon="edit" onClick={() => startRenamingTrack(openTrackForMenu)}>
@@ -1638,7 +1688,7 @@ export default function LibraryScreen() {
           <ActionSheetButton
             icon="download"
             onClick={() => void downloadTrackOffline(openTrackForMenu)}
-            disabled={!openTrackForMenu.signedUrl}
+            disabled={!openTrackForMenu.storage_path}
           >
             Download offline
           </ActionSheetButton>
@@ -1660,7 +1710,7 @@ export default function LibraryScreen() {
     return (
       <>
         <Navbar />
-        <main className="app-shell min-h-screen px-6 py-8 pb-[calc(12rem+env(safe-area-inset-bottom))] text-[var(--app-text)]">
+        <main className="app-shell app-page-enter min-h-screen px-6 py-8 pb-[calc(12rem+env(safe-area-inset-bottom))] text-[var(--app-text)]">
           <p className="text-sm text-[var(--app-muted)]">Loading...</p>
         </main>
       </>
@@ -1676,7 +1726,7 @@ export default function LibraryScreen() {
       <>
         <Navbar />
         <main className="app-shell min-h-screen px-6 py-8 text-[var(--app-text)]">
-          <div className="app-content">
+          <div className="app-content app-page-enter">
             <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <h1 className="text-3xl font-semibold">Your Library</h1>
@@ -1693,7 +1743,7 @@ export default function LibraryScreen() {
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            <div className="app-stagger grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {visiblePlaylists
                 .map((playlist) => {
                   const isBuiltInPlaylist = playlist.id === ALL_TRACKS_PLAYLIST_ID;
@@ -1725,7 +1775,7 @@ export default function LibraryScreen() {
                         </Link>
                         <button
                           type="button"
-                          onClick={() => playPlaylist(playlist)}
+                          onClick={() => void playPlaylist(playlist)}
                           disabled={availablePlaylistTracks.length === 0}
                           className="absolute bottom-2 right-2 flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-[0_12px_30px_rgba(0,0,0,0.35)] transition hover:scale-105 disabled:cursor-not-allowed disabled:opacity-50"
                           aria-label={`Play ${playlist.name}`}
@@ -1777,7 +1827,7 @@ export default function LibraryScreen() {
     <>
       <Navbar />
       <main className="app-shell min-h-screen px-5 py-6 pb-[calc(12rem+env(safe-area-inset-bottom))] text-[var(--app-text)] sm:px-8 sm:pb-36">
-        <div className="app-content">
+        <div className="app-content app-page-enter">
           <div className="mb-8 flex items-center justify-end gap-4">
             <p className="text-sm text-[var(--app-muted)]">{displayName}</p>
           </div>
@@ -1820,7 +1870,7 @@ export default function LibraryScreen() {
 
                 <button
                   type="button"
-                  onClick={playFirstTrack}
+                  onClick={() => void playFirstTrack()}
                   disabled={visibleTracks.length === 0}
                   aria-label="Play playlist"
                   title="Play playlist"
@@ -1901,7 +1951,7 @@ export default function LibraryScreen() {
                   </div>
                 ) : null}
 
-                <div className="divide-y divide-white/[0.06]">
+                <div className="app-stagger divide-y divide-white/[0.06]">
                   {visibleTracks.map((track, index) => {
                   const displayTitle = trackMetadataById[track.id]?.title || track.title;
                   const isCurrentTrack = currentTrackId === track.id;
@@ -1915,7 +1965,7 @@ export default function LibraryScreen() {
                         onDragOver={(event) => event.preventDefault()}
                         onDrop={() => reorderTrack(track.id)}
                         onDragEnd={() => setDraggedTrackId(null)}
-                      className={`group relative grid grid-cols-[2.5rem_1fr_auto] items-center gap-3 rounded-xl px-2 py-3 ${
+                      className={`app-list-row group relative grid grid-cols-[2.5rem_1fr_auto] items-center gap-3 rounded-xl px-2 py-3 ${
                         draggedTrackId === track.id ? "opacity-45" : ""
                       } ${
                         isCurrentTrack ? "bg-[var(--app-playing-bg)] text-[var(--app-playing-text)]" : ""

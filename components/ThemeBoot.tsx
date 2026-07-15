@@ -5,7 +5,6 @@ import { supabase } from "@/lib/supabase";
 import {
   applyThemeToDocument,
   getAppThemePreferences,
-  loadSyncedUserPreferences,
 } from "@/lib/user-prefs";
 
 export default function ThemeBoot() {
@@ -19,8 +18,6 @@ export default function ThemeBoot() {
       }
 
       applyThemeToDocument(getAppThemePreferences(userId));
-      const { preferences } = await loadSyncedUserPreferences(supabase, userId);
-      applyThemeToDocument(preferences.theme);
     }
 
     void loadTheme();

@@ -21,6 +21,11 @@
   --card-radius: 14px;
   --density-gap: 1rem;
   --app-content-max: 64rem;
+  --motion-fast: 140ms;
+  --motion-medium: 220ms;
+  --motion-slow: 320ms;
+  --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --motion-enter: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @theme inline {
@@ -176,6 +181,7 @@ body::-webkit-scrollbar,
 .app-shell {
   background: var(--app-gradient), var(--app-bg);
   color: var(--app-text);
+  view-transition-name: app-shell;
 }
 
 .app-card {
@@ -184,6 +190,11 @@ body::-webkit-scrollbar,
   background: var(--app-bg-soft);
   backdrop-filter: blur(18px);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-medium) var(--motion-ease),
+    transform var(--motion-medium) var(--motion-ease);
 }
 
 .app-chip {
@@ -191,6 +202,10 @@ body::-webkit-scrollbar,
   border: 1px solid var(--app-border);
   background: var(--app-glass);
   backdrop-filter: blur(14px);
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
 }
 
 .app-input {
@@ -199,6 +214,10 @@ body::-webkit-scrollbar,
   background: var(--app-input-bg);
   color: var(--app-text);
   backdrop-filter: blur(14px);
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-fast) var(--motion-ease);
 }
 
 .app-input::placeholder {
@@ -331,12 +350,16 @@ input[type="range"] {
   background: var(--app-accent);
   color: var(--app-accent-ink);
   font-weight: 600;
-  transition: background 120ms ease;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
   backdrop-filter: blur(14px);
 }
 
 .app-button:hover {
   background: var(--app-accent-strong);
+  transform: translateY(-1px);
 }
 
 .app-grid-gap {
@@ -362,4 +385,140 @@ input[type="range"] {
 
 .reveal-in {
   animation: fade-up 180ms ease both;
+}
+
+@keyframes app-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes app-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes app-sheet-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes app-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.app-page-enter {
+  animation: app-page-enter var(--motion-slow) var(--motion-enter) both;
+}
+
+.app-search-overlay,
+.app-sheet-backdrop {
+  animation: app-fade-in var(--motion-fast) ease-out both;
+}
+
+.app-search-panel {
+  animation: app-panel-enter var(--motion-medium) var(--motion-enter) both;
+}
+
+.app-sheet-panel,
+.app-player-bar,
+.app-player-expanded {
+  animation: app-sheet-enter var(--motion-medium) var(--motion-enter) both;
+}
+
+.app-list-row {
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease),
+    opacity var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
+}
+
+.app-stagger > * {
+  animation: app-page-enter var(--motion-medium) var(--motion-enter) both;
+}
+
+.app-stagger > *:nth-child(1) {
+  animation-delay: 20ms;
+}
+
+.app-stagger > *:nth-child(2) {
+  animation-delay: 45ms;
+}
+
+.app-stagger > *:nth-child(3) {
+  animation-delay: 70ms;
+}
+
+.app-stagger > *:nth-child(4) {
+  animation-delay: 95ms;
+}
+
+.app-stagger > *:nth-child(5) {
+  animation-delay: 120ms;
+}
+
+.app-stagger > *:nth-child(6) {
+  animation-delay: 145ms;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .app-card:hover {
+    border-color: color-mix(in srgb, var(--app-accent) 34%, var(--app-border));
+    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.28);
+    transform: translateY(-2px);
+  }
+
+  .app-list-row:hover {
+    transform: translateX(2px);
+  }
+}
+
+::view-transition-group(app-shell) {
+  animation-duration: var(--motion-medium);
+  animation-timing-function: var(--motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
 }
