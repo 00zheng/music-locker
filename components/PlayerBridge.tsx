@@ -152,6 +152,20 @@ function setMediaSessionTrackMetadata(track: PlayerTrack | null) {
   }
 }
 
+function clearMediaSessionPositionState() {
+  const mediaSession = getMediaSession();
+
+  if (!mediaSession || typeof mediaSession.setPositionState !== "function") {
+    return;
+  }
+
+  try {
+    mediaSession.setPositionState();
+  } catch {
+    // Some browsers expose Media Session but reject position updates.
+  }
+}
+
 function shuffleIndexes(indexes: number[]) {
   const shuffled = [...indexes];
 
@@ -455,6 +469,7 @@ export default function PlayerBridge() {
     setCurrentTime(0);
     setDuration(0);
     lastProgressRenderAtRef.current = 0;
+    clearMediaSessionPositionState();
   }, []);
 
   const clearPlayRetryTimeout = useCallback(() => {
@@ -772,6 +787,7 @@ export default function PlayerBridge() {
     cancelPendingAudioPlay();
     endedHandledRef.current = false;
     setMediaSessionTrackMetadata(track);
+    clearMediaSessionPositionState();
     audio.src = track.audioUrl;
     audio.currentTime = 0;
     audio.load();
@@ -942,6 +958,7 @@ export default function PlayerBridge() {
 
     setIsPlaying(false);
     dispatchCurrentTrack(null);
+    clearMediaSessionPositionState();
   }, [cancelPendingAudioPlay, moveToNextTrack]);
 
   useEffect(() => {
@@ -953,6 +970,7 @@ export default function PlayerBridge() {
 
     if (!track) {
       setMediaSessionTrackMetadata(null);
+      clearMediaSessionPositionState();
       mediaSession.playbackState = "none";
       MEDIA_SESSION_ACTIONS.forEach((action) => setMediaSessionAction(action, null));
       return;
@@ -997,6 +1015,7 @@ export default function PlayerBridge() {
           : 0;
 
     if (!track || audioDuration <= 0 || typeof mediaSession.setPositionState !== "function") {
+      clearMediaSessionPositionState();
       return;
     }
 
