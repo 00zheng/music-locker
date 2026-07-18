@@ -14,6 +14,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 import {
   APPEND_EVENT,
   PLAY_EVENT,
@@ -79,6 +80,8 @@ const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
   "seekto",
   "stop",
 ];
+const TRACK_SIGNED_URL_SECONDS = 60 * 60;
+const SIGNED_URL_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
 function formatTime(value: number) {
   const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
@@ -215,6 +218,58 @@ function repeatModeIcon(mode: RepeatMode): "repeat" | "repeatOne" {
   }
 
   return "repeat";
+}
+
+function isNonExpiringAudioUrl(audioUrl: string) {
+  return audioUrl.startsWith("blob:") || audioUrl.startsWith("data:") || audioUrl.startsWith("/");
+}
+
+function hasFreshAudioUrl(track: PlayerTrack) {
+  const audioUrl = track.audioUrl.trim();
+
+  if (!audioUrl) {
+    return false;
+  }
+
+  if (isNonExpiringAudioUrl(audioUrl)) {
+    return true;
+  }
+
+  if (!track.storagePath?.trim()) {
+    return true;
+  }
+
+  return Boolean(
+    track.audioUrlExpiresAt &&
+      track.audioUrlExpiresAt > Date.now() + SIGNED_URL_REFRESH_WINDOW_MS
+  );
+}
+
+async function resolvePlayableTrack(track: PlayerTrack) {
+  if (hasFreshAudioUrl(track)) {
+    return track;
+  }
+
+  const storagePath = track.storagePath?.trim();
+  const canTryExistingUrl = Boolean(track.audioUrl.trim() && !track.audioUrlExpiresAt);
+
+  if (!storagePath || typeof navigator === "undefined" || !navigator.onLine) {
+    return canTryExistingUrl ? track : null;
+  }
+
+  const { data, error } = await supabase.storage
+    .from("music")
+    .createSignedUrl(storagePath, TRACK_SIGNED_URL_SECONDS);
+
+  if (error || !data?.signedUrl) {
+    return canTryExistingUrl ? track : null;
+  }
+
+  return {
+    ...track,
+    audioUrl: data.signedUrl,
+    audioUrlExpiresAt: Date.now() + TRACK_SIGNED_URL_SECONDS * 1000,
+  };
 }
 
 function PlayerIcon({
@@ -389,6 +444,8 @@ export default function PlayerBridge() {
   const playRequestIdRef = useRef(0);
   const wantsPlaybackRef = useRef(false);
   const endedHandledRef = useRef(false);
+  const playbackFailureTrackIdsRef = useRef<Set<string>>(new Set());
+  const handleAudioSourceFailureRef = useRef<() => void>(() => {});
   const [currentTrack, setCurrentTrack] = useState<PlayerTrack | null>(null);
   const [manualQueue, setManualQueue] = useState<QueueEntry[]>([]);
   const [contextQueue, setContextQueue] = useState<QueueEntry[]>([]);
@@ -713,6 +770,7 @@ export default function PlayerBridge() {
       setContextQueue(createQueueEntries(isShuffleOn ? shuffleTracks(nextContextQueue) : nextContextQueue));
       setContextCycle(sourceTracks);
       setHistory([]);
+      playbackFailureTrackIdsRef.current.clear();
       resetPlaybackProgress();
       closeQueueMenu();
       setIsPlaying(true);
@@ -784,17 +842,46 @@ export default function PlayerBridge() {
       return;
     }
 
+    let isActive = true;
+
     cancelPendingAudioPlay();
-    endedHandledRef.current = false;
+    endedHandledRef.current = true;
     setMediaSessionTrackMetadata(track);
     clearMediaSessionPositionState();
-    audio.src = track.audioUrl;
-    audio.currentTime = 0;
+    audio.pause();
+    audio.removeAttribute("src");
     audio.load();
     lastProgressRenderAtRef.current = 0;
     dispatchCurrentTrack(track.id);
 
-    requestAudioPlay(audio);
+    void resolvePlayableTrack(track).then((playableTrack) => {
+      if (!isActive || audioRef.current !== audio) {
+        return;
+      }
+
+      if (!playableTrack) {
+        handleAudioSourceFailureRef.current();
+        return;
+      }
+
+      if (
+        playableTrack.audioUrl !== track.audioUrl ||
+        playableTrack.audioUrlExpiresAt !== track.audioUrlExpiresAt
+      ) {
+        setCurrentTrack(playableTrack);
+        return;
+      }
+
+      endedHandledRef.current = false;
+      audio.src = playableTrack.audioUrl;
+      audio.currentTime = 0;
+      audio.load();
+      requestAudioPlay(audio);
+    });
+
+    return () => {
+      isActive = false;
+    };
   }, [cancelPendingAudioPlay, requestAudioPlay, track]);
 
   useEffect(() => {
@@ -960,6 +1047,33 @@ export default function PlayerBridge() {
     dispatchCurrentTrack(null);
     clearMediaSessionPositionState();
   }, [cancelPendingAudioPlay, moveToNextTrack]);
+
+  const handleAudioSourceFailure = useCallback(() => {
+    const failedTrackId = track?.id;
+
+    if (failedTrackId) {
+      playbackFailureTrackIdsRef.current.add(failedTrackId);
+    }
+
+    cancelPendingAudioPlay();
+
+    const failedTrackIds = playbackFailureTrackIdsRef.current;
+    const hasQueuedFallback =
+      manualQueue.some((queuedEntry) => !failedTrackIds.has(queuedEntry.track.id)) ||
+      contextQueue.some((queuedEntry) => !failedTrackIds.has(queuedEntry.track.id));
+
+    if (hasQueuedFallback && moveToNextTrack()) {
+      return;
+    }
+
+    setIsPlaying(false);
+    dispatchCurrentTrack(null);
+    clearMediaSessionPositionState();
+  }, [cancelPendingAudioPlay, contextQueue, manualQueue, moveToNextTrack, track]);
+
+  useEffect(() => {
+    handleAudioSourceFailureRef.current = handleAudioSourceFailure;
+  }, [handleAudioSourceFailure]);
 
   useEffect(() => {
     const mediaSession = getMediaSession();
@@ -1893,6 +2007,9 @@ export default function PlayerBridge() {
           const audio = audioRef.current;
           if (!audio) return;
           endedHandledRef.current = false;
+          if (track) {
+            playbackFailureTrackIdsRef.current.delete(track.id);
+          }
           setDuration(audio.duration || 0);
         }}
         onDurationChange={() => {
@@ -1905,6 +2022,7 @@ export default function PlayerBridge() {
           if (!audio?.ended || isRepeatOneOn) return;
           handleEnded();
         }}
+        onError={handleAudioSourceFailure}
         onEnded={handleEnded}
         hidden
       />

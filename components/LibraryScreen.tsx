@@ -1221,6 +1221,7 @@ export default function LibraryScreen() {
   function playerTrackFromTrack(track: Track, playlist?: Playlist | null) {
     const sourcePlaylistCoverUrl = playlistCoverSource(playlist, playlistCoverUrlsById);
     const activePlaylistCoverUrl = playlistCoverSource(activePlaylist, playlistCoverUrlsById);
+    const isOfflineSource = Boolean(track.offlineUrl);
 
     return {
       id: track.id,
@@ -1228,6 +1229,8 @@ export default function LibraryScreen() {
       artist: trackMetadataById[track.id]?.artist || track.artist || playlist?.name || activePlaylist?.name || "Unknown artist",
       coverDataUrl: trackMetadataById[track.id]?.coverDataUrl || sourcePlaylistCoverUrl || activePlaylistCoverUrl,
       audioUrl: track.offlineUrl || track.signedUrl || "",
+      audioUrlExpiresAt: isOfflineSource ? null : track.signedUrlExpiresAt ?? null,
+      storagePath: track.storage_path,
       sourceHref: playlist && playlist.id !== ALL_TRACKS_PLAYLIST_ID ? `/library/${playlist.id}` : "/library",
       sourceLabel: playlist?.name || "Library",
     };

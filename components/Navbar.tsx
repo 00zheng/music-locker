@@ -14,6 +14,7 @@ import { dispatchPlayQueue } from "@/components/player-events";
 
 const NAVBAR_REFRESH_INTERVAL_MS = 60000;
 const PLAYLIST_COVER_SIGNED_URL_SECONDS = 60 * 60;
+const TRACK_SIGNED_URL_SECONDS = 60 * 60;
 
 type SearchTrack = {
   id: string;
@@ -56,6 +57,10 @@ function playlistCoverSource(playlist: Playlist | null | undefined, signedUrlsBy
   }
 
   return signedUrlsById[playlist.id] || playlist.coverDataUrl || null;
+}
+
+function trackSignedUrlExpiresAt() {
+  return Date.now() + TRACK_SIGNED_URL_SECONDS * 1000;
 }
 
 async function createPlaylistCoverUrls(playlists: Playlist[]) {
@@ -399,7 +404,7 @@ export default function Navbar() {
 
     const { data, error } = await supabase.storage
       .from("music")
-      .createSignedUrl(storagePath, 60 * 60);
+      .createSignedUrl(storagePath, TRACK_SIGNED_URL_SECONDS);
 
     if (error || !data?.signedUrl) {
       router.push(result.href);
@@ -414,6 +419,8 @@ export default function Navbar() {
           artist: result.artist,
           coverDataUrl: result.coverDataUrl || null,
           audioUrl: data.signedUrl,
+          audioUrlExpiresAt: trackSignedUrlExpiresAt(),
+          storagePath,
           sourceHref: result.href,
           sourceLabel: "Project",
         },

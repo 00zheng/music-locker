@@ -6,6 +6,8 @@ export type PlayerTrack = {
   artist: string;
   coverDataUrl?: string | null;
   audioUrl: string;
+  audioUrlExpiresAt?: number | null;
+  storagePath?: string | null;
   sourceHref?: string;
   sourceLabel?: string;
 };
