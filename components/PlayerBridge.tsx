@@ -1866,9 +1866,9 @@ export default function PlayerBridge() {
         aria-label={isShuffleOn ? "Turn shuffle off" : "Shuffle"}
         aria-pressed={isShuffleOn}
         title={isShuffleOn ? "Turn shuffle off" : "Shuffle"}
-        className={`flex items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+        className={`flex items-center justify-center rounded-full transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
           isCompact ? "h-11 w-11" : "h-12 w-12"
-        } ${isShuffleOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-muted)]"}`}
+        } ${isShuffleOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)] hover:bg-[var(--app-accent)]" : "text-[var(--app-muted)] hover:bg-[var(--app-glass)] hover:text-[var(--app-text)]"}`}
       >
         <PlayerIcon name="shuffle" className={isCompact ? "h-4 w-4" : "h-5 w-5"} />
       </button>
@@ -1917,9 +1917,9 @@ export default function PlayerBridge() {
         aria-label={repeatModeTitle(repeatMode)}
         aria-pressed={isRepeatAllOn || isRepeatOneOn}
         title={repeatModeTitle(repeatMode)}
-        className={`flex items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+        className={`flex items-center justify-center rounded-full transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
           isCompact ? "h-11 w-11" : "h-12 w-12"
-        } ${isRepeatAllOn || isRepeatOneOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-muted)]"}`}
+        } ${isRepeatAllOn || isRepeatOneOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)] hover:bg-[var(--app-accent)]" : "text-[var(--app-muted)] hover:bg-[var(--app-glass)] hover:text-[var(--app-text)]"}`}
       >
         <PlayerIcon name={repeatModeIcon(repeatMode)} className={isCompact ? "h-4 w-4" : "h-5 w-5"} />
       </button>
@@ -1937,8 +1937,8 @@ export default function PlayerBridge() {
         aria-label="Queue"
         aria-pressed={isQueueOpen}
         title="Queue"
-        className={`flex h-11 w-11 items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
-          isQueueOpen ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-muted)]"
+        className={`flex h-11 w-11 items-center justify-center rounded-full transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70 ${
+          isQueueOpen ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)] hover:bg-[var(--app-accent)]" : "text-[var(--app-muted)] hover:bg-[var(--app-glass)] hover:text-[var(--app-text)]"
         }`}
       >
         <PlayerIcon name="queue" className="h-5 w-5" />
@@ -2399,8 +2399,8 @@ export default function PlayerBridge() {
                   aria-label={isShuffleOn ? "Turn shuffle off" : "Shuffle"}
                   aria-pressed={isShuffleOn}
                   title={isShuffleOn ? "Turn shuffle off" : "Shuffle"}
-                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] sm:flex ${
-                    isShuffleOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-muted)]"
+                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition sm:flex ${
+                    isShuffleOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)] hover:bg-[var(--app-accent)]" : "text-[var(--app-muted)] hover:bg-[var(--app-glass)] hover:text-[var(--app-text)]"
                   }`}
                 >
                   <PlayerIcon name="shuffle" />
@@ -2412,8 +2412,8 @@ export default function PlayerBridge() {
                   aria-label={repeatModeTitle(repeatMode)}
                   aria-pressed={isRepeatAllOn || isRepeatOneOn}
                   title={repeatModeTitle(repeatMode)}
-                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] sm:flex ${
-                    isRepeatAllOn || isRepeatOneOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-muted)]"
+                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition sm:flex ${
+                    isRepeatAllOn || isRepeatOneOn ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)] hover:bg-[var(--app-accent)]" : "text-[var(--app-muted)] hover:bg-[var(--app-glass)] hover:text-[var(--app-text)]"
                   }`}
                 >
                   <PlayerIcon name={repeatModeIcon(repeatMode)} />
@@ -2428,8 +2428,8 @@ export default function PlayerBridge() {
                   aria-label="Queue"
                   aria-pressed={isQueueOpen}
                   title="Queue"
-                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-[var(--app-glass)] sm:flex ${
-                    isQueueOpen ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)]" : "text-[var(--app-text)]"
+                  className={`hidden h-10 w-10 items-center justify-center rounded-full transition sm:flex ${
+                    isQueueOpen ? "bg-[var(--app-accent)] text-[var(--app-accent-ink)] hover:bg-[var(--app-accent)]" : "text-[var(--app-text)] hover:bg-[var(--app-glass)]"
                   }`}
                 >
                   <PlayerIcon name="queue" />
@@ -2444,7 +2444,7 @@ export default function PlayerBridge() {
                   >
                     <PlayerIcon name="volume" />
                   </button>
-                  <div className="pointer-events-none absolute bottom-11 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-full border border-[var(--app-border)] bg-[var(--app-bg-soft)] px-3 py-4 opacity-0 shadow-[0_18px_50px_rgba(0,0,0,0.22)] backdrop-blur-xl transition group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+                  <div className="pointer-events-none absolute bottom-10 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-full border border-[var(--app-border)] bg-[var(--app-bg-soft)] px-3 py-4 opacity-0 shadow-[0_18px_50px_rgba(0,0,0,0.22)] backdrop-blur-xl transition group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
                     <input
                       type="range"
                       min={0}
