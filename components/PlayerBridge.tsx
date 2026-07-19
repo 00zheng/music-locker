@@ -89,7 +89,7 @@ const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
 const TRACK_SIGNED_URL_SECONDS = 60 * 60;
 const SIGNED_URL_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_VOLUME_LEVEL = 90;
-const VOLUME_CURVE_EXPONENT = 3;
+const VOLUME_CURVE_EXPONENT = 2;
 
 function clampVolumeLevel(value: number) {
   if (!Number.isFinite(value)) {
