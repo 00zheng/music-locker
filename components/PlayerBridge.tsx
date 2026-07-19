@@ -88,6 +88,22 @@ const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
 ];
 const TRACK_SIGNED_URL_SECONDS = 60 * 60;
 const SIGNED_URL_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+const DEFAULT_VOLUME_LEVEL = 90;
+const VOLUME_CURVE_EXPONENT = 3;
+
+function clampVolumeLevel(value: number) {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_VOLUME_LEVEL;
+  }
+
+  return Math.min(100, Math.max(0, value));
+}
+
+function volumeLevelToAudioVolume(level: number) {
+  const normalizedLevel = clampVolumeLevel(level) / 100;
+
+  return normalizedLevel ** VOLUME_CURVE_EXPONENT;
+}
 
 function formatTime(value: number) {
   const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
@@ -470,7 +486,7 @@ export default function PlayerBridge() {
   const [queueDragState, setQueueDragState] = useState<QueueDragState | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(0.9);
+  const [volumeLevel, setVolumeLevel] = useState(DEFAULT_VOLUME_LEVEL);
   const createQueueEntry = useCallback((queuedTrack: PlayerTrack): QueueEntry => {
     const entryNumber = queueEntryCounterRef.current;
 
@@ -545,6 +561,7 @@ export default function PlayerBridge() {
   const progressRangeStyle = {
     "--player-range-progress": progressPercent,
   } as CSSProperties;
+  const audioVolume = volumeLevelToAudioVolume(volumeLevel);
 
   useEffect(() => {
     displayedQueueItemsRef.current = displayedQueueItems;
@@ -882,8 +899,8 @@ export default function PlayerBridge() {
       return;
     }
 
-    audio.volume = volume;
-  }, [volume]);
+    audio.volume = audioVolume;
+  }, [audioVolume]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -2431,14 +2448,14 @@ export default function PlayerBridge() {
                     <input
                       type="range"
                       min={0}
-                      max={1}
-                      step={0.01}
-                      value={volume}
-                      onChange={(event) => setVolume(Number(event.currentTarget.value))}
+                      max={100}
+                      step={1}
+                      value={volumeLevel}
+                      onChange={(event) => setVolumeLevel(clampVolumeLevel(Number(event.currentTarget.value)))}
                       className="h-24 w-2 accent-[var(--app-accent)] [direction:rtl] [writing-mode:vertical-lr]"
                       aria-label="Volume"
                     />
-                    <span className="text-[10px] text-[var(--app-muted)]">{Math.round(volume * 100)}</span>
+                    <span className="text-[10px] text-[var(--app-muted)]">{Math.round(volumeLevel)}</span>
                   </div>
                 </div>
               </div>
