@@ -16,6 +16,8 @@
   --app-input-bg: rgba(10, 10, 10, 0.36);
   --app-playing-bg: rgba(34, 197, 94, 0.1);
   --app-playing-text: #86efac;
+  --app-danger-bg: rgba(239, 68, 68, 0.12);
+  --app-danger-text: #fca5a5;
   --app-range-track: rgba(255, 255, 255, 0.16);
   --app-gradient: linear-gradient(180deg, #151515 0%, #080808 100%);
   --card-radius: 14px;
@@ -49,6 +51,8 @@ html[data-theme="nocturne"] {
   --app-input-bg: rgba(10, 10, 10, 0.36);
   --app-playing-bg: rgba(34, 197, 94, 0.1);
   --app-playing-text: #86efac;
+  --app-danger-bg: rgba(239, 68, 68, 0.12);
+  --app-danger-text: #fca5a5;
   --app-range-track: rgba(255, 255, 255, 0.16);
   --app-gradient: linear-gradient(180deg, #111111 0%, #0b0b0b 100%);
 }
@@ -67,6 +71,8 @@ html[data-theme="sunset"] {
   --app-input-bg: rgba(10, 10, 10, 0.36);
   --app-playing-bg: rgba(34, 197, 94, 0.1);
   --app-playing-text: #86efac;
+  --app-danger-bg: rgba(239, 68, 68, 0.12);
+  --app-danger-text: #fca5a5;
   --app-range-track: rgba(255, 255, 255, 0.18);
   --app-gradient: linear-gradient(180deg, #242424 0%, #101010 100%);
 }
@@ -85,6 +91,8 @@ html[data-theme="ocean"] {
   --app-input-bg: rgba(10, 10, 10, 0.36);
   --app-playing-bg: rgba(34, 197, 94, 0.1);
   --app-playing-text: #86efac;
+  --app-danger-bg: rgba(239, 68, 68, 0.12);
+  --app-danger-text: #fca5a5;
   --app-range-track: rgba(169, 230, 232, 0.18);
   --app-gradient: linear-gradient(180deg, #0d2223 0%, #061010 100%);
 }
@@ -103,6 +111,8 @@ html[data-theme="forest"] {
   --app-input-bg: rgba(10, 10, 10, 0.36);
   --app-playing-bg: rgba(34, 197, 94, 0.1);
   --app-playing-text: #86efac;
+  --app-danger-bg: rgba(239, 68, 68, 0.12);
+  --app-danger-text: #fca5a5;
   --app-range-track: rgba(186, 231, 194, 0.18);
   --app-gradient: linear-gradient(180deg, #152319 0%, #080f09 100%);
 }
@@ -121,6 +131,8 @@ html[data-theme="light"] {
   --app-input-bg: rgba(0, 0, 0, 0.055);
   --app-playing-bg: rgba(4, 120, 87, 0.14);
   --app-playing-text: #047857;
+  --app-danger-bg: rgba(220, 38, 38, 0.1);
+  --app-danger-text: #b91c1c;
   --app-range-track: rgba(0, 0, 0, 0.14);
   --app-gradient: linear-gradient(180deg, #fbfbf8 0%, #ecece7 100%);
 }

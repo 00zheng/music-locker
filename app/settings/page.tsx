@@ -193,7 +193,7 @@ export default function SettingsPage() {
     <main className="app-shell app-page-enter min-h-screen text-[var(--app-text)]">
       <Navbar />
 
-      <section className="app-content px-6 py-10">
+      <section className="app-content px-6 pb-[calc(12rem+env(safe-area-inset-bottom))] pt-10 sm:pb-36">
         <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-3xl font-semibold">Settings</h1>

@@ -377,15 +377,15 @@ function ActionSheet({
       role="dialog"
       aria-modal="true"
       aria-label={label}
-      className="app-sheet-backdrop fixed inset-0 z-[1200] flex items-end justify-center bg-black/55 px-3 backdrop-blur-sm sm:items-center sm:px-6"
+      className="app-sheet-backdrop fixed inset-0 z-[1200] flex items-end justify-center bg-black/45 px-3 backdrop-blur-sm sm:items-center sm:px-6"
       onClick={onClose}
     >
       <div
-        className="app-sheet-panel w-full max-w-lg overflow-hidden rounded-t-[28px] border border-white/[0.08] bg-[rgba(24,24,24,0.98)] shadow-[0_28px_90px_rgba(0,0,0,0.68)] backdrop-blur-2xl sm:rounded-[28px]"
+        className="app-sheet-panel w-full max-w-lg overflow-hidden rounded-t-[28px] border border-[var(--app-border)] bg-[var(--app-bg-soft)] text-[var(--app-text)] shadow-[0_28px_90px_rgba(0,0,0,0.32)] backdrop-blur-2xl sm:rounded-[28px]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="max-h-[88svh] overflow-y-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 sm:px-5 sm:pb-5">
-          <div className="mx-auto mb-4 h-1.5 w-14 rounded-full bg-white/30" />
+          <div className="mx-auto mb-4 h-1.5 w-14 rounded-full bg-[var(--app-glass-strong)]" />
           {children}
         </div>
       </div>
@@ -414,13 +414,13 @@ function ActionSheetButton({
       disabled={disabled}
       className={`flex min-h-14 w-full items-center gap-4 rounded-2xl px-3 py-3 text-left text-base font-semibold transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 ${
         tone === "danger"
-          ? "text-red-300 hover:bg-red-500/[0.12]"
-          : "text-[var(--app-text)] hover:bg-white/[0.08]"
+          ? "text-[var(--app-danger-text)] hover:bg-[var(--app-danger-bg)]"
+          : "text-[var(--app-text)] hover:bg-[var(--app-glass)]"
       }`}
     >
       <span
         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
-          tone === "danger" ? "bg-red-500/10 text-red-300" : "bg-white/[0.08] text-[var(--app-muted)]"
+          tone === "danger" ? "bg-[var(--app-danger-bg)] text-[var(--app-danger-text)]" : "bg-[var(--app-glass)] text-[var(--app-muted)]"
         }`}
       >
         <InlineIcon name={icon} className="h-5 w-5" />
@@ -1575,8 +1575,8 @@ export default function LibraryScreen() {
         setPlaylistRenameValue("");
       }}
     >
-      <div className="flex items-center gap-4 border-b border-white/[0.08] pb-4">
-        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white/[0.06] text-[var(--app-muted)]">
+      <div className="flex items-center gap-4 border-b border-[var(--app-border)] pb-4">
+        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[var(--app-glass)] text-[var(--app-muted)]">
           {openPlaylistMenuCover ? (
             <img src={openPlaylistMenuCover} alt="" className="h-full w-full object-cover" />
           ) : (
@@ -1597,7 +1597,7 @@ export default function LibraryScreen() {
         </ActionSheetButton>
 
         {renamingPlaylistId === openPlaylistForMenu.id ? (
-          <div className="rounded-2xl bg-white/[0.05] p-3">
+          <div className="rounded-2xl bg-[var(--app-glass)] p-3">
             <label className="block text-xs font-semibold uppercase text-[var(--app-muted)]">
               Rename playlist
             </label>
@@ -1650,8 +1650,8 @@ export default function LibraryScreen() {
 
   const trackActionSheet = openTrackForMenu ? (
     <ActionSheet label={`${openTrackMenuTitle} track menu`} onClose={() => setOpenTrackMenuId(null)}>
-      <div className="flex items-center gap-4 border-b border-white/[0.08] pb-4">
-        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white/[0.06] text-[var(--app-muted)]">
+      <div className="flex items-center gap-4 border-b border-[var(--app-border)] pb-4">
+        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[var(--app-glass)] text-[var(--app-muted)]">
           {openTrackMenuCover ? (
             <img src={openTrackMenuCover} alt="" className="h-full w-full object-cover" />
           ) : (
@@ -1664,7 +1664,7 @@ export default function LibraryScreen() {
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl bg-white/[0.05] p-4">
+      <div className="mt-4 rounded-2xl bg-[var(--app-glass)] p-4">
         <p className="text-xs font-semibold uppercase text-[var(--app-muted)]">Properties</p>
         <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
           <dt className="text-[var(--app-muted)]">Date</dt>
