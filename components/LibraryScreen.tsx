@@ -1739,7 +1739,7 @@ export default function LibraryScreen() {
               <button
                 type="button"
                 onClick={createPlaylist}
-                className="inline-flex h-10 items-center gap-2 rounded-full bg-white px-4 text-sm font-semibold text-black transition hover:scale-[1.02] active:scale-[0.98]"
+                className="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--app-border)] bg-[var(--app-bg-soft)] px-4 text-sm font-semibold text-[var(--app-text)] backdrop-blur transition hover:bg-[var(--app-glass-strong)] hover:scale-[1.02] active:scale-[0.98]"
               >
                 <InlineIcon name="add" />
                 Add
@@ -1801,7 +1801,7 @@ export default function LibraryScreen() {
                               setRenamingPlaylistId(null);
                               setPlaylistRenameValue("");
                             }}
-                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-[var(--app-text)]"
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--app-text)] transition hover:bg-[var(--app-glass)]"
                             aria-label={`Open menu for ${playlist.name}`}
                             title="Playlist menu"
                           >
@@ -2040,7 +2040,7 @@ export default function LibraryScreen() {
                             setRenamingPlaylistId(null);
                             setPlaylistRenameValue("");
                           }}
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--app-muted)] transition hover:bg-white/[0.08] hover:text-[var(--app-text)]"
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--app-text)] transition hover:bg-[var(--app-glass)]"
                           aria-label={`Open menu for ${displayTitle}`}
                           title="Track menu"
                         >

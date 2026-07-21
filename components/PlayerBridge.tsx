@@ -88,6 +88,7 @@ const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
 ];
 const TRACK_SIGNED_URL_SECONDS = 60 * 60;
 const SIGNED_URL_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+const PREPARED_LOOKAHEAD_SIZE = 8;
 const DEFAULT_VOLUME_LEVEL = 90;
 const VOLUME_CURVE_EXPONENT = 2;
 
@@ -265,6 +266,59 @@ function hasFreshAudioUrl(track: PlayerTrack) {
     track.audioUrlExpiresAt &&
       track.audioUrlExpiresAt > Date.now() + SIGNED_URL_REFRESH_WINDOW_MS
   );
+}
+
+function audioUrlToElementSrc(audioUrl: string) {
+  if (typeof window === "undefined") {
+    return audioUrl;
+  }
+
+  try {
+    return new URL(audioUrl, window.location.href).href;
+  } catch {
+    return audioUrl;
+  }
+}
+
+function audioElementHasTrackSource(audio: HTMLAudioElement, track: PlayerTrack) {
+  return (audio.currentSrc || audio.src) === audioUrlToElementSrc(track.audioUrl);
+}
+
+function mergePreparedTrack(candidateTrack: PlayerTrack, preparedTrack: PlayerTrack) {
+  return {
+    ...candidateTrack,
+    audioUrl: preparedTrack.audioUrl,
+    audioUrlExpiresAt: preparedTrack.audioUrlExpiresAt ?? candidateTrack.audioUrlExpiresAt,
+  };
+}
+
+function updateQueueEntriesWithPreparedTracks(
+  queue: QueueEntry[],
+  preparedTracks: Map<string, PlayerTrack>
+) {
+  let hasChanges = false;
+  const nextQueue = queue.map((queuedEntry) => {
+    const preparedTrack = preparedTracks.get(queuedEntry.track.id);
+
+    if (!preparedTrack || !hasFreshAudioUrl(preparedTrack)) {
+      return queuedEntry;
+    }
+
+    if (
+      queuedEntry.track.audioUrl === preparedTrack.audioUrl &&
+      queuedEntry.track.audioUrlExpiresAt === preparedTrack.audioUrlExpiresAt
+    ) {
+      return queuedEntry;
+    }
+
+    hasChanges = true;
+    return {
+      ...queuedEntry,
+      track: mergePreparedTrack(queuedEntry.track, preparedTrack),
+    };
+  });
+
+  return hasChanges ? nextQueue : queue;
 }
 
 async function resolvePlayableTrack(track: PlayerTrack) {
@@ -466,9 +520,18 @@ export default function PlayerBridge() {
   const playRequestIdRef = useRef(0);
   const wantsPlaybackRef = useRef(false);
   const endedHandledRef = useRef(false);
+  const audioTrackIdRef = useRef<string | null>(null);
+  const currentTrackRef = useRef<PlayerTrack | null>(null);
+  const manualQueueRef = useRef<QueueEntry[]>([]);
+  const contextQueueRef = useRef<QueueEntry[]>([]);
+  const contextCycleRef = useRef<PlayerTrack[]>([]);
+  const historyRef = useRef<PlayerTrack[]>([]);
+  const repeatModeRef = useRef<RepeatMode>("none");
+  const isShuffleOnRef = useRef(false);
   const preloadAudioRef = useRef<HTMLAudioElement | null>(null);
   const preloadRequestIdRef = useRef(0);
   const preloadedTrackRef = useRef<PreloadedTrack | null>(null);
+  const preparedTracksRef = useRef<Map<string, PlayerTrack>>(new Map());
   const playbackFailureTrackIdsRef = useRef<Set<string>>(new Set());
   const handleAudioSourceFailureRef = useRef<() => void>(() => {});
   const [currentTrack, setCurrentTrack] = useState<PlayerTrack | null>(null);
@@ -535,25 +598,32 @@ export default function PlayerBridge() {
     manualQueue.length > 0 ||
     contextQueue.length > 0 ||
     (isRepeatAllOn && contextCycle.length > 0);
-  const nextPreloadTrack = useMemo(() => {
+  const preparedLookaheadTracks = useMemo(() => {
     if (isRepeatOneOn) {
-      return null;
+      return [];
     }
 
-    if (manualQueue[0]) {
-      return manualQueue[0].track;
+    const seenTrackIds = new Set<string>();
+    const nextTracks: PlayerTrack[] = [];
+    const addTrack = (queuedTrack: PlayerTrack | null | undefined) => {
+      if (!queuedTrack || seenTrackIds.has(queuedTrack.id)) {
+        return;
+      }
+
+      seenTrackIds.add(queuedTrack.id);
+      nextTracks.push(queuedTrack);
+    };
+
+    manualQueue.forEach((queuedEntry) => addTrack(queuedEntry.track));
+    contextQueue.forEach((queuedEntry) => addTrack(queuedEntry.track));
+
+    if (isRepeatAllOn) {
+      contextCycle.forEach(addTrack);
     }
 
-    if (contextQueue[0]) {
-      return contextQueue[0].track;
-    }
-
-    if (isRepeatAllOn && !isShuffleOn) {
-      return contextCycle[0] ?? null;
-    }
-
-    return null;
-  }, [contextCycle, contextQueue, isRepeatAllOn, isRepeatOneOn, isShuffleOn, manualQueue]);
+    return nextTracks.slice(0, PREPARED_LOOKAHEAD_SIZE);
+  }, [contextCycle, contextQueue, isRepeatAllOn, isRepeatOneOn, manualQueue]);
+  const nextPreloadTrack = preparedLookaheadTracks[0] ?? null;
   const scrubMax = duration > 0 ? duration : Math.max(currentTime, 0);
   const scrubValue = Math.min(currentTime, scrubMax);
   const progressPercent =
@@ -566,6 +636,34 @@ export default function PlayerBridge() {
   useEffect(() => {
     displayedQueueItemsRef.current = displayedQueueItems;
   }, [displayedQueueItems]);
+
+  useEffect(() => {
+    currentTrackRef.current = currentTrack;
+  }, [currentTrack]);
+
+  useEffect(() => {
+    manualQueueRef.current = manualQueue;
+  }, [manualQueue]);
+
+  useEffect(() => {
+    contextQueueRef.current = contextQueue;
+  }, [contextQueue]);
+
+  useEffect(() => {
+    contextCycleRef.current = contextCycle;
+  }, [contextCycle]);
+
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+
+  useEffect(() => {
+    repeatModeRef.current = repeatMode;
+  }, [repeatMode]);
+
+  useEffect(() => {
+    isShuffleOnRef.current = isShuffleOn;
+  }, [isShuffleOn]);
 
   const resetPlaybackProgress = useCallback(() => {
     setCurrentTime(0);
@@ -603,24 +701,31 @@ export default function PlayerBridge() {
     preloadAudio.load();
   }, []);
 
-  const takePreloadedTrack = useCallback((candidateTrack: PlayerTrack) => {
+  const takePreparedTrack = useCallback((candidateTrack: PlayerTrack) => {
     const preloadedTrack = preloadedTrackRef.current;
 
     if (
-      !preloadedTrack ||
-      preloadedTrack.id !== candidateTrack.id ||
-      !preloadedTrack.audioUrl
+      preloadedTrack &&
+      preloadedTrack.id === candidateTrack.id &&
+      preloadedTrack.audioUrl
     ) {
+      preloadedTrackRef.current = null;
+
+      return mergePreparedTrack(candidateTrack, preloadedTrack.track);
+    }
+
+    const preparedTrack = preparedTracksRef.current.get(candidateTrack.id);
+
+    if (!preparedTrack) {
       return candidateTrack;
     }
 
-    preloadedTrackRef.current = null;
+    if (!hasFreshAudioUrl(preparedTrack)) {
+      preparedTracksRef.current.delete(candidateTrack.id);
+      return candidateTrack;
+    }
 
-    return {
-      ...candidateTrack,
-      audioUrl: preloadedTrack.audioUrl,
-      audioUrlExpiresAt: preloadedTrack.track.audioUrlExpiresAt ?? candidateTrack.audioUrlExpiresAt,
-    };
+    return mergePreparedTrack(candidateTrack, preparedTrack);
   }, []);
 
   const requestAudioPlay = useCallback((audio: HTMLAudioElement) => {
@@ -666,10 +771,71 @@ export default function PlayerBridge() {
     clearPreloadedTrack();
   }, [cancelPendingAudioPlay, clearPreloadedTrack]);
 
-  const restartCurrentAudio = useCallback(() => {
+  const loadPlayableTrack = useCallback((audio: HTMLAudioElement, playableTrack: PlayerTrack) => {
+    audioTrackIdRef.current = playableTrack.id;
+    setMediaSessionTrackMetadata(playableTrack);
+    clearMediaSessionPositionState();
+    lastProgressRenderAtRef.current = 0;
+    endedHandledRef.current = false;
+
+    if (!audioElementHasTrackSource(audio, playableTrack)) {
+      audio.src = playableTrack.audioUrl;
+      audio.load();
+    }
+
+    try {
+      audio.currentTime = 0;
+    } catch {
+      // Some mobile browsers reject seeking while a new source is still attaching.
+    }
+
+    setCurrentTime(0);
+    dispatchCurrentTrack(playableTrack.id);
+    requestAudioPlay(audio);
+  }, [requestAudioPlay]);
+
+  const playTrackOnCurrentAudio = useCallback((playbackTrack: PlayerTrack) => {
     const audio = audioRef.current;
 
-    if (!audio || !track) {
+    if (!audio) {
+      return;
+    }
+
+    if (hasFreshAudioUrl(playbackTrack)) {
+      loadPlayableTrack(audio, playbackTrack);
+      return;
+    }
+
+    const requestedTrackId = playbackTrack.id;
+
+    void resolvePlayableTrack(playbackTrack).then((playableTrack) => {
+      if (
+        audioRef.current !== audio ||
+        currentTrackRef.current?.id !== requestedTrackId
+      ) {
+        return;
+      }
+
+      if (!playableTrack) {
+        handleAudioSourceFailureRef.current();
+        return;
+      }
+
+      if (hasFreshAudioUrl(playableTrack)) {
+        preparedTracksRef.current.set(playableTrack.id, playableTrack);
+      }
+
+      currentTrackRef.current = playableTrack;
+      setCurrentTrack(playableTrack);
+      loadPlayableTrack(audio, playableTrack);
+    });
+  }, [loadPlayableTrack]);
+
+  const restartCurrentAudio = useCallback(() => {
+    const audio = audioRef.current;
+    const activeTrack = currentTrackRef.current;
+
+    if (!audio || !activeTrack) {
       return false;
     }
 
@@ -677,11 +843,11 @@ export default function PlayerBridge() {
     endedHandledRef.current = false;
     lastProgressRenderAtRef.current = 0;
     setCurrentTime(0);
-    dispatchCurrentTrack(track.id);
+    dispatchCurrentTrack(activeTrack.id);
     requestAudioPlay(audio);
 
     return true;
-  }, [requestAudioPlay, track]);
+  }, [requestAudioPlay]);
 
   const seekTo = useCallback((value: number) => {
     const audio = audioRef.current;
@@ -769,32 +935,46 @@ export default function PlayerBridge() {
   }, [displayedQueueItems, queueDragState?.key]);
 
   const startTrack = useCallback((nextTrack: PlayerTrack, skippedTracks: PlayerTrack[] = []) => {
-    setHistory((currentHistory) => [
-      ...currentHistory,
-      ...(track ? [track] : []),
+    const playbackTrack = takePreparedTrack(nextTrack);
+    const activeTrack = currentTrackRef.current;
+    const nextHistory = [
+      ...historyRef.current,
+      ...(activeTrack ? [activeTrack] : []),
       ...skippedTracks,
-    ]);
-    setCurrentTrack(nextTrack);
+    ];
+
+    historyRef.current = nextHistory;
+    currentTrackRef.current = playbackTrack;
+    setHistory(nextHistory);
+    setCurrentTrack(playbackTrack);
     resetPlaybackProgress();
     setIsPlaying(true);
     closeQueueMenu();
-  }, [closeQueueMenu, resetPlaybackProgress, track]);
+    playTrackOnCurrentAudio(playbackTrack);
+  }, [closeQueueMenu, playTrackOnCurrentAudio, resetPlaybackProgress, takePreparedTrack]);
 
   const toggleShuffleMode = useCallback(() => {
-    if (isShuffleOn) {
+    if (isShuffleOnRef.current) {
+      isShuffleOnRef.current = false;
       setIsShuffleOn(false);
       return;
     }
 
-    setContextQueue((currentContextQueue) => shuffleItems(currentContextQueue));
+    const nextContextQueue = shuffleItems(contextQueueRef.current);
+
+    contextQueueRef.current = nextContextQueue;
+    setContextQueue(nextContextQueue);
+    isShuffleOnRef.current = true;
     setIsShuffleOn(true);
     closeQueueMenu();
-  }, [closeQueueMenu, isShuffleOn]);
+  }, [closeQueueMenu]);
 
   const cycleRepeatMode = useCallback(() => {
-    setRepeatMode((currentMode) => (
-      currentMode === "all" ? "one" : currentMode === "one" ? "none" : "all"
-    ));
+    const currentMode = repeatModeRef.current;
+    const nextMode = currentMode === "all" ? "one" : currentMode === "one" ? "none" : "all";
+
+    repeatModeRef.current = nextMode;
+    setRepeatMode(nextMode);
     closeQueueMenu();
   }, [closeQueueMenu]);
 
@@ -805,33 +985,43 @@ export default function PlayerBridge() {
     }
 
     if (item.source === "manual") {
-      const selectedEntry = manualQueue[item.index];
+      const currentManualQueue = manualQueueRef.current;
+      const selectedEntry = currentManualQueue[item.index];
 
       if (!selectedEntry) {
         return;
       }
 
       startTrack(
-        takePreloadedTrack(selectedEntry.track),
-        manualQueue.slice(0, item.index).map((queuedEntry) => queuedEntry.track)
+        selectedEntry.track,
+        currentManualQueue.slice(0, item.index).map((queuedEntry) => queuedEntry.track)
       );
-      setManualQueue(manualQueue.slice(item.index + 1));
+      const nextManualQueue = currentManualQueue.slice(item.index + 1);
+
+      manualQueueRef.current = nextManualQueue;
+      setManualQueue(nextManualQueue);
       return;
     }
 
-    const selectedEntry = contextQueue[item.index];
+    const currentManualQueue = manualQueueRef.current;
+    const currentContextQueue = contextQueueRef.current;
+    const selectedEntry = currentContextQueue[item.index];
 
     if (!selectedEntry) {
       return;
     }
 
-    startTrack(takePreloadedTrack(selectedEntry.track), [
-      ...manualQueue.map((queuedEntry) => queuedEntry.track),
-      ...contextQueue.slice(0, item.index).map((queuedEntry) => queuedEntry.track),
+    startTrack(selectedEntry.track, [
+      ...currentManualQueue.map((queuedEntry) => queuedEntry.track),
+      ...currentContextQueue.slice(0, item.index).map((queuedEntry) => queuedEntry.track),
     ]);
+    const nextContextQueue = currentContextQueue.slice(item.index + 1);
+
+    manualQueueRef.current = [];
+    contextQueueRef.current = nextContextQueue;
     setManualQueue([]);
-    setContextQueue(contextQueue.slice(item.index + 1));
-  }, [closeQueueMenu, contextQueue, manualQueue, startTrack, takePreloadedTrack]);
+    setContextQueue(nextContextQueue);
+  }, [closeQueueMenu, startTrack]);
 
   useEffect(() => {
     function handlePlay(event: Event) {
@@ -843,23 +1033,32 @@ export default function PlayerBridge() {
       }
 
       const startIndex = Math.min(Math.max(customEvent.detail.startIndex, 0), sourceTracks.length - 1);
-      const nextTrack = sourceTracks[startIndex];
+      const nextTrack = takePreparedTrack(sourceTracks[startIndex]);
       const nextContextQueue = sourceTracks.slice(startIndex + 1);
+      const nextContextQueueEntries = createQueueEntries(
+        isShuffleOnRef.current ? shuffleTracks(nextContextQueue) : nextContextQueue
+      );
 
+      currentTrackRef.current = nextTrack;
+      manualQueueRef.current = [];
+      contextQueueRef.current = nextContextQueueEntries;
+      contextCycleRef.current = sourceTracks;
+      historyRef.current = [];
       setCurrentTrack(nextTrack);
       setManualQueue([]);
-      setContextQueue(createQueueEntries(isShuffleOn ? shuffleTracks(nextContextQueue) : nextContextQueue));
+      setContextQueue(nextContextQueueEntries);
       setContextCycle(sourceTracks);
       setHistory([]);
       playbackFailureTrackIdsRef.current.clear();
       resetPlaybackProgress();
       closeQueueMenu();
       setIsPlaying(true);
+      playTrackOnCurrentAudio(nextTrack);
     }
 
     window.addEventListener(PLAY_EVENT, handlePlay as EventListener);
     return () => window.removeEventListener(PLAY_EVENT, handlePlay as EventListener);
-  }, [closeQueueMenu, createQueueEntries, isShuffleOn, resetPlaybackProgress]);
+  }, [closeQueueMenu, createQueueEntries, playTrackOnCurrentAudio, resetPlaybackProgress, takePreparedTrack]);
 
   useEffect(() => {
     function handleAppend(event: Event) {
@@ -870,27 +1069,39 @@ export default function PlayerBridge() {
         return;
       }
 
-      if (!currentTrack) {
-        setCurrentTrack(incomingTracks[0]);
-        setManualQueue(createQueueEntries(incomingTracks.slice(1)));
+      if (!currentTrackRef.current) {
+        const nextTrack = takePreparedTrack(incomingTracks[0]);
+        const nextManualQueue = createQueueEntries(incomingTracks.slice(1));
+
+        currentTrackRef.current = nextTrack;
+        manualQueueRef.current = nextManualQueue;
+        contextQueueRef.current = [];
+        contextCycleRef.current = [];
+        historyRef.current = [];
+        setCurrentTrack(nextTrack);
+        setManualQueue(nextManualQueue);
         setContextQueue([]);
         setContextCycle([]);
         setHistory([]);
         resetPlaybackProgress();
         closeQueueMenu();
         setIsPlaying(true);
+        playTrackOnCurrentAudio(nextTrack);
         return;
       }
 
-      setManualQueue((currentManualQueue) => [
-        ...currentManualQueue,
+      const nextManualQueue = [
+        ...manualQueueRef.current,
         ...createQueueEntries(incomingTracks),
-      ]);
+      ];
+
+      manualQueueRef.current = nextManualQueue;
+      setManualQueue(nextManualQueue);
     }
 
     window.addEventListener(APPEND_EVENT, handleAppend as EventListener);
     return () => window.removeEventListener(APPEND_EVENT, handleAppend as EventListener);
-  }, [closeQueueMenu, createQueueEntries, currentTrack, resetPlaybackProgress]);
+  }, [closeQueueMenu, createQueueEntries, playTrackOnCurrentAudio, resetPlaybackProgress, takePreparedTrack]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -918,12 +1129,14 @@ export default function PlayerBridge() {
 
   useEffect(() => {
     if (!nextPreloadTrack) {
+      preparedTracksRef.current.clear();
       clearPreloadedTrack();
       return;
     }
 
     const requestId = preloadRequestIdRef.current + 1;
     preloadRequestIdRef.current = requestId;
+    const lookaheadTrackIds = new Set(preparedLookaheadTracks.map((preparedTrack) => preparedTrack.id));
 
     let preloadAudio = preloadAudioRef.current;
 
@@ -932,6 +1145,42 @@ export default function PlayerBridge() {
       preloadAudio.preload = "auto";
       preloadAudioRef.current = preloadAudio;
     }
+
+    preparedTracksRef.current.forEach((_, trackId) => {
+      if (!lookaheadTrackIds.has(trackId)) {
+        preparedTracksRef.current.delete(trackId);
+      }
+    });
+
+    const syncPreparedTracksToQueues = () => {
+      const nextManualQueue = updateQueueEntriesWithPreparedTracks(
+        manualQueueRef.current,
+        preparedTracksRef.current
+      );
+      const nextContextQueue = updateQueueEntriesWithPreparedTracks(
+        contextQueueRef.current,
+        preparedTracksRef.current
+      );
+
+      if (nextManualQueue !== manualQueueRef.current) {
+        manualQueueRef.current = nextManualQueue;
+        setManualQueue(nextManualQueue);
+      }
+
+      if (nextContextQueue !== contextQueueRef.current) {
+        contextQueueRef.current = nextContextQueue;
+        setContextQueue(nextContextQueue);
+      }
+    };
+
+    const rememberPlayableTrack = (playableTrack: PlayerTrack | null) => {
+      if (!playableTrack || !hasFreshAudioUrl(playableTrack)) {
+        return;
+      }
+
+      preparedTracksRef.current.set(playableTrack.id, playableTrack);
+      syncPreparedTracksToQueues();
+    };
 
     void resolvePlayableTrack(nextPreloadTrack)
       .then((playableTrack) => {
@@ -947,53 +1196,47 @@ export default function PlayerBridge() {
           return;
         }
 
+        rememberPlayableTrack(playableTrack);
+
         preloadedTrackRef.current = {
           id: playableTrack.id,
           audioUrl: playableTrack.audioUrl,
           track: playableTrack,
         };
 
-        if (preloadAudio.src !== playableTrack.audioUrl) {
+        if (!audioElementHasTrackSource(preloadAudio, playableTrack)) {
           preloadAudio.src = playableTrack.audioUrl;
           preloadAudio.load();
         }
-
-        const updateFirstPreparedQueueEntry = (currentQueue: QueueEntry[]) => {
-          const firstEntry = currentQueue[0];
-
-          if (
-            !firstEntry ||
-            firstEntry.track.id !== playableTrack.id ||
-            (
-              firstEntry.track.audioUrl === playableTrack.audioUrl &&
-              firstEntry.track.audioUrlExpiresAt === playableTrack.audioUrlExpiresAt
-            )
-          ) {
-            return currentQueue;
-          }
-
-          return [
-            {
-              ...firstEntry,
-              track: {
-                ...firstEntry.track,
-                audioUrl: playableTrack.audioUrl,
-                audioUrlExpiresAt: playableTrack.audioUrlExpiresAt,
-              },
-            },
-            ...currentQueue.slice(1),
-          ];
-        };
-
-        setManualQueue(updateFirstPreparedQueueEntry);
-        setContextQueue(updateFirstPreparedQueueEntry);
       })
       .catch(() => {
         if (preloadRequestIdRef.current === requestId) {
           preloadedTrackRef.current = null;
         }
       });
-  }, [clearPreloadedTrack, nextPreloadTrack]);
+
+    const remainingLookaheadTracks = preparedLookaheadTracks.slice(1);
+
+    if (remainingLookaheadTracks.length === 0) {
+      return;
+    }
+
+    void Promise.all(
+      remainingLookaheadTracks.map(async (queuedTrack) => {
+        try {
+          return await resolvePlayableTrack(queuedTrack);
+        } catch {
+          return null;
+        }
+      })
+    ).then((playableTracks) => {
+      if (preloadRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      playableTracks.forEach(rememberPlayableTrack);
+    });
+  }, [clearPreloadedTrack, nextPreloadTrack, preparedLookaheadTracks]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1003,15 +1246,27 @@ export default function PlayerBridge() {
     }
 
     let isActive = true;
-    const playbackTrack = takePreloadedTrack(track);
+    const playbackTrack = takePreparedTrack(track);
+
+    if (
+      playbackTrack.audioUrl &&
+      audioTrackIdRef.current === playbackTrack.id &&
+      audioElementHasTrackSource(audio, playbackTrack)
+    ) {
+      currentTrackRef.current = playbackTrack;
+      endedHandledRef.current = false;
+      setMediaSessionTrackMetadata(playbackTrack);
+      dispatchCurrentTrack(playbackTrack.id);
+      return;
+    }
 
     cancelPendingAudioPlay();
     endedHandledRef.current = true;
-    setMediaSessionTrackMetadata(track);
+    setMediaSessionTrackMetadata(playbackTrack);
     clearMediaSessionPositionState();
     audio.pause();
     lastProgressRenderAtRef.current = 0;
-    dispatchCurrentTrack(track.id);
+    dispatchCurrentTrack(playbackTrack.id);
 
     void resolvePlayableTrack(playbackTrack).then((playableTrack) => {
       if (!isActive || audioRef.current !== audio) {
@@ -1023,19 +1278,19 @@ export default function PlayerBridge() {
         return;
       }
 
-      endedHandledRef.current = false;
-      if (audio.src !== playableTrack.audioUrl) {
-        audio.src = playableTrack.audioUrl;
-        audio.load();
+      if (hasFreshAudioUrl(playableTrack)) {
+        preparedTracksRef.current.set(playableTrack.id, playableTrack);
       }
-      audio.currentTime = 0;
-      requestAudioPlay(audio);
+
+      currentTrackRef.current = playableTrack;
+      setCurrentTrack(playableTrack);
+      loadPlayableTrack(audio, playableTrack);
     });
 
     return () => {
       isActive = false;
     };
-  }, [cancelPendingAudioPlay, requestAudioPlay, track, takePreloadedTrack]);
+  }, [cancelPendingAudioPlay, loadPlayableTrack, track, takePreparedTrack]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1115,71 +1370,79 @@ export default function PlayerBridge() {
       return;
     }
 
-    const previousTrack = history[history.length - 1];
+    const currentHistory = historyRef.current;
+    const previousTrack = currentHistory[currentHistory.length - 1];
 
     if (!previousTrack) {
       return;
     }
 
-    setHistory((currentHistory) => currentHistory.slice(0, -1));
-    setCurrentTrack(previousTrack);
+    const playbackTrack = takePreparedTrack(previousTrack);
+    const nextHistory = currentHistory.slice(0, -1);
+
+    historyRef.current = nextHistory;
+    currentTrackRef.current = playbackTrack;
+    setHistory(nextHistory);
+    setCurrentTrack(playbackTrack);
     resetPlaybackProgress();
     closeQueueMenu();
     setIsPlaying(true);
-  }, [closeQueueMenu, history, resetPlaybackProgress]);
+    playTrackOnCurrentAudio(playbackTrack);
+  }, [closeQueueMenu, playTrackOnCurrentAudio, resetPlaybackProgress, takePreparedTrack]);
 
   const moveToNextTrack = useCallback(() => {
-    if (!track) {
+    if (!currentTrackRef.current) {
       return false;
     }
 
-    if (isRepeatOneOn) {
+    if (repeatModeRef.current === "one") {
       return restartCurrentAudio();
     }
 
-    const nextManualEntry = manualQueue[0];
+    const currentManualQueue = manualQueueRef.current;
+    const nextManualEntry = currentManualQueue[0];
 
     if (nextManualEntry) {
-      startTrack(takePreloadedTrack(nextManualEntry.track));
-      setManualQueue((currentManualQueue) => currentManualQueue.slice(1));
+      const nextManualQueue = currentManualQueue.slice(1);
+
+      manualQueueRef.current = nextManualQueue;
+      setManualQueue(nextManualQueue);
+      startTrack(nextManualEntry.track);
       return true;
     }
 
-    const nextContextEntry = contextQueue[0];
+    const currentContextQueue = contextQueueRef.current;
+    const nextContextEntry = currentContextQueue[0];
 
     if (nextContextEntry) {
-      startTrack(takePreloadedTrack(nextContextEntry.track));
-      setContextQueue((currentContextQueue) => currentContextQueue.slice(1));
+      const nextContextQueue = currentContextQueue.slice(1);
+
+      contextQueueRef.current = nextContextQueue;
+      setContextQueue(nextContextQueue);
+      startTrack(nextContextEntry.track);
       return true;
     }
 
-    if (isRepeatAllOn && contextCycle.length > 0) {
-      const nextCycle = isShuffleOn ? shuffleTracks(contextCycle) : contextCycle;
+    const currentContextCycle = contextCycleRef.current;
+
+    if (repeatModeRef.current === "all" && currentContextCycle.length > 0) {
+      const nextCycle = isShuffleOnRef.current ? shuffleTracks(currentContextCycle) : currentContextCycle;
       const nextTrack = nextCycle[0];
 
       if (!nextTrack) {
         return false;
       }
 
-      startTrack(takePreloadedTrack(nextTrack));
-      setContextQueue(createQueueEntries(nextCycle.slice(1)));
+      const nextContextQueue = createQueueEntries(nextCycle.slice(1));
+
+      contextQueueRef.current = nextContextQueue;
+      setContextQueue(nextContextQueue);
+      startTrack(nextTrack);
       return true;
     }
 
     return false;
-  }, [
-    contextCycle,
-    contextQueue,
-    isRepeatAllOn,
-    isRepeatOneOn,
-    isShuffleOn,
-    manualQueue,
-    createQueueEntries,
-    restartCurrentAudio,
-    startTrack,
-    track,
-    takePreloadedTrack,
-  ]);
+  }, [createQueueEntries, restartCurrentAudio, startTrack]);
 
   const playNext = useCallback(() => {
     moveToNextTrack();
@@ -1203,7 +1466,7 @@ export default function PlayerBridge() {
   }, [cancelPendingAudioPlay, moveToNextTrack]);
 
   const handleAudioSourceFailure = useCallback(() => {
-    const failedTrackId = track?.id;
+    const failedTrackId = currentTrackRef.current?.id;
 
     if (failedTrackId) {
       playbackFailureTrackIdsRef.current.add(failedTrackId);
@@ -1213,8 +1476,8 @@ export default function PlayerBridge() {
 
     const failedTrackIds = playbackFailureTrackIdsRef.current;
     const hasQueuedFallback =
-      manualQueue.some((queuedEntry) => !failedTrackIds.has(queuedEntry.track.id)) ||
-      contextQueue.some((queuedEntry) => !failedTrackIds.has(queuedEntry.track.id));
+      manualQueueRef.current.some((queuedEntry) => !failedTrackIds.has(queuedEntry.track.id)) ||
+      contextQueueRef.current.some((queuedEntry) => !failedTrackIds.has(queuedEntry.track.id));
 
     if (hasQueuedFallback && moveToNextTrack()) {
       return;
@@ -1223,7 +1486,7 @@ export default function PlayerBridge() {
     setIsPlaying(false);
     dispatchCurrentTrack(null);
     clearMediaSessionPositionState();
-  }, [cancelPendingAudioPlay, contextQueue, manualQueue, moveToNextTrack, track]);
+  }, [cancelPendingAudioPlay, moveToNextTrack]);
 
   useEffect(() => {
     handleAudioSourceFailureRef.current = handleAudioSourceFailure;
@@ -1403,9 +1666,15 @@ export default function PlayerBridge() {
     };
 
     if (fromItem.source === "manual") {
-      setManualQueue(reorderItems);
+      const nextManualQueue = reorderItems(manualQueueRef.current);
+
+      manualQueueRef.current = nextManualQueue;
+      setManualQueue(nextManualQueue);
     } else {
-      setContextQueue(reorderItems);
+      const nextContextQueue = reorderItems(contextQueueRef.current);
+
+      contextQueueRef.current = nextContextQueue;
+      setContextQueue(nextContextQueue);
     }
   }, [captureQueueItemRects]);
 
@@ -1788,13 +2057,15 @@ export default function PlayerBridge() {
     closeQueueMenu();
 
     if (item.source === "manual") {
-      setManualQueue((currentManualQueue) =>
-        currentManualQueue.filter((_, index) => index !== item.index)
-      );
+      const nextManualQueue = manualQueueRef.current.filter((_, index) => index !== item.index);
+
+      manualQueueRef.current = nextManualQueue;
+      setManualQueue(nextManualQueue);
     } else if (item.source === "context") {
-      setContextQueue((currentContextQueue) =>
-        currentContextQueue.filter((_, index) => index !== item.index)
-      );
+      const nextContextQueue = contextQueueRef.current.filter((_, index) => index !== item.index);
+
+      contextQueueRef.current = nextContextQueue;
+      setContextQueue(nextContextQueue);
     }
   }, [closeQueueMenu]);
 
