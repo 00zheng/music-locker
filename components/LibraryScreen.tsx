@@ -22,6 +22,10 @@ import {
   dispatchPlayQueue,
   getCurrentTrackId,
 } from "@/components/player-events";
+import {
+  audioMimeTypeForUpload,
+  storageSafeAudioFileName,
+} from "@/components/library-upload";
 
 type Track = {
   id: string;
@@ -1088,11 +1092,12 @@ export default function LibraryScreen() {
 
     for (const file of selectedFiles) {
       const fileTitle = file.name.replace(/\.[^/.]+$/, "");
-      const storagePath = `${user.id}/${crypto.randomUUID()}-${file.name.replace(/\s+/g, "-")}`;
+      const audioMimeType = audioMimeTypeForUpload(file);
+      const storagePath = `${user.id}/${crypto.randomUUID()}-${storageSafeAudioFileName(file.name)}`;
 
-      const { error: uploadError } = await supabase.storage
+      const { data: uploadedObject, error: uploadError } = await supabase.storage
         .from("music")
-        .upload(storagePath, file, { contentType: file.type || "audio/mpeg" });
+        .upload(storagePath, file, audioMimeType ? { contentType: audioMimeType } : undefined);
 
       if (uploadError) {
         setStatus(uploadError.message);
@@ -1100,20 +1105,25 @@ export default function LibraryScreen() {
         return;
       }
 
+      const uploadedPath = uploadedObject?.fullPath?.startsWith("music/")
+        ? uploadedObject.fullPath.slice("music/".length)
+        : uploadedObject?.path || storagePath;
+
       const { data: insertedTrack, error: insertError } = await supabase
         .from("tracks")
         .insert({
           user_id: user.id,
           title: fileTitle,
           artist: null,
-          storage_path: storagePath,
-          mime_type: file.type || "audio/mpeg",
+          storage_path: uploadedPath,
+          mime_type: audioMimeType,
           file_size: file.size,
         })
         .select("*")
         .single();
 
       if (insertError) {
+        await supabase.storage.from("music").remove([uploadedPath]);
         setStatus(insertError.message);
         setIsUploading(false);
         return;

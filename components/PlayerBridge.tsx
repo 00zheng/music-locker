@@ -312,6 +312,8 @@ export default function PlayerBridge() {
   const playRetryTimeoutRef = useRef<number | null>(null);
   const playRequestIdRef = useRef(0);
   const sourceRequestIdRef = useRef(0);
+  const loadedTrackIdRef = useRef<string | null>(null);
+  const pendingTrackIdRef = useRef<string | null>(null);
   const sourceTransitionRef = useRef(false);
   const wantsPlaybackRef = useRef(false);
   const endedHandledRef = useRef(false);
@@ -504,7 +506,19 @@ export default function PlayerBridge() {
     return mergePreparedTrack(candidateTrack, preparedTrack);
   }, []);
 
+  const hasCurrentAudioSource = useCallback(() => {
+    const currentTrackId = currentTrackRef.current?.id;
+
+    return Boolean(currentTrackId && loadedTrackIdRef.current === currentTrackId);
+  }, []);
+
   const requestAudioPlay = useCallback((audio: HTMLAudioElement) => {
+    const requestedTrackId = currentTrackRef.current?.id;
+
+    if (!requestedTrackId || loadedTrackIdRef.current !== requestedTrackId) {
+      return;
+    }
+
     const requestId = playRequestIdRef.current + 1;
 
     playRequestIdRef.current = requestId;
@@ -515,6 +529,8 @@ export default function PlayerBridge() {
       if (
         playRequestIdRef.current !== requestId ||
         audioRef.current !== audio ||
+        currentTrackRef.current?.id !== requestedTrackId ||
+        loadedTrackIdRef.current !== requestedTrackId ||
         !wantsPlaybackRef.current ||
         !audio.src
       ) {
@@ -525,6 +541,8 @@ export default function PlayerBridge() {
         if (
           playRequestIdRef.current !== requestId ||
           audioRef.current !== audio ||
+          currentTrackRef.current?.id !== requestedTrackId ||
+          loadedTrackIdRef.current !== requestedTrackId ||
           !wantsPlaybackRef.current
         ) {
           return;
@@ -546,11 +564,14 @@ export default function PlayerBridge() {
 
   useEffect(() => () => {
     sourceRequestIdRef.current += 1;
+    loadedTrackIdRef.current = null;
+    pendingTrackIdRef.current = null;
     cancelPendingAudioPlay();
     clearAudioPreload();
   }, [cancelPendingAudioPlay, clearAudioPreload]);
 
   const loadPlayableTrack = useCallback((audio: HTMLAudioElement, playableTrack: PlayerTrack) => {
+    cancelPendingAudioPlay();
     sourceTransitionRef.current = true;
     clearMediaSessionPositionState();
     lastProgressRenderAtRef.current = 0;
@@ -562,6 +583,9 @@ export default function PlayerBridge() {
       audio.load();
     }
 
+    loadedTrackIdRef.current = playableTrack.id;
+    pendingTrackIdRef.current = null;
+
     try {
       audio.currentTime = 0;
     } catch {
@@ -570,8 +594,11 @@ export default function PlayerBridge() {
 
     setCurrentTime(0);
     dispatchCurrentTrack(playableTrack.id);
-    requestAudioPlay(audio);
-  }, [requestAudioPlay]);
+
+    if (wantsPlaybackRef.current) {
+      requestAudioPlay(audio);
+    }
+  }, [cancelPendingAudioPlay, requestAudioPlay]);
 
   const playTrackOnCurrentAudio = useCallback((playbackTrack: PlayerTrack) => {
     const audio = audioRef.current;
@@ -582,6 +609,12 @@ export default function PlayerBridge() {
 
     const sourceRequestId = sourceRequestIdRef.current + 1;
     sourceRequestIdRef.current = sourceRequestId;
+    sourceTransitionRef.current = true;
+    wantsPlaybackRef.current = true;
+    loadedTrackIdRef.current = null;
+    pendingTrackIdRef.current = playbackTrack.id;
+    cancelPendingAudioPlay();
+    audio.pause();
 
     if (hasFreshAudioUrl(playbackTrack)) {
       loadPlayableTrack(audio, playbackTrack);
@@ -612,13 +645,13 @@ export default function PlayerBridge() {
       setCurrentTrack(playableTrack);
       loadPlayableTrack(audio, playableTrack);
     });
-  }, [loadPlayableTrack]);
+  }, [cancelPendingAudioPlay, loadPlayableTrack]);
 
   const restartCurrentAudio = useCallback(() => {
     const audio = audioRef.current;
     const activeTrack = currentTrackRef.current;
 
-    if (!audio || !activeTrack) {
+    if (!audio || !activeTrack || loadedTrackIdRef.current !== activeTrack.id) {
       return false;
     }
 
@@ -633,7 +666,7 @@ export default function PlayerBridge() {
   }, [requestAudioPlay]);
 
   const seekTo = useCallback((value: number) => {
-    const audio = audioRef.current;
+    const audio = hasCurrentAudioSource() ? audioRef.current : null;
     const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
     const audioDuration =
       audio && Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : duration;
@@ -649,7 +682,7 @@ export default function PlayerBridge() {
 
     lastProgressRenderAtRef.current = performance.now();
     setCurrentTime(nextTime);
-  }, [duration]);
+  }, [duration, hasCurrentAudioSource]);
 
   const closeQueueMenu = useCallback(() => {
     setOpenQueueMenuKey(null);
@@ -959,8 +992,17 @@ export default function PlayerBridge() {
     if (isPlaying) {
       wantsPlaybackRef.current = true;
 
-      if (currentTrackRef.current) {
-        dispatchCurrentTrack(currentTrackRef.current.id);
+      const activeTrack = currentTrackRef.current;
+
+      if (activeTrack) {
+        dispatchCurrentTrack(activeTrack.id);
+
+        if (!hasCurrentAudioSource()) {
+          if (pendingTrackIdRef.current !== activeTrack.id) {
+            playTrackOnCurrentAudio(activeTrack);
+          }
+          return;
+        }
       }
 
       requestAudioPlay(audio);
@@ -969,11 +1011,19 @@ export default function PlayerBridge() {
       cancelPendingAudioPlay();
       audio.pause();
     }
-  }, [cancelPendingAudioPlay, isPlaying, requestAudioPlay]);
+  }, [
+    cancelPendingAudioPlay,
+    hasCurrentAudioSource,
+    isPlaying,
+    playTrackOnCurrentAudio,
+    requestAudioPlay,
+  ]);
 
   useEffect(() => {
     function seekBy(seconds: number) {
-      const currentAudioTime = audioRef.current?.currentTime ?? currentTime;
+      const currentAudioTime = hasCurrentAudioSource()
+        ? audioRef.current?.currentTime ?? currentTime
+        : currentTime;
       seekTo(currentAudioTime + seconds);
     }
 
@@ -1016,17 +1066,9 @@ export default function PlayerBridge() {
       window.removeEventListener("keydown", handlePlayerKeyDown, true);
       window.removeEventListener("keyup", handlePlayerKeyUp, true);
     };
-  }, [currentTime, seekTo, track]);
+  }, [currentTime, hasCurrentAudioSource, seekTo, track]);
 
   const playPrevious = useCallback(() => {
-    const audio = audioRef.current;
-
-    if (audio && audio.currentTime > 3) {
-      audio.currentTime = 0;
-      setCurrentTime(0);
-      return;
-    }
-
     const currentHistory = historyRef.current;
     const previousTrack = currentHistory[currentHistory.length - 1];
 
@@ -1045,7 +1087,12 @@ export default function PlayerBridge() {
     closeQueueMenu();
     setIsPlaying(true);
     playTrackOnCurrentAudio(playbackTrack);
-  }, [closeQueueMenu, playTrackOnCurrentAudio, resetPlaybackProgress, takePreparedTrack]);
+  }, [
+    closeQueueMenu,
+    playTrackOnCurrentAudio,
+    resetPlaybackProgress,
+    takePreparedTrack,
+  ]);
 
   const moveToNextTrack = useCallback(() => {
     if (!currentTrackRef.current) {
@@ -1132,6 +1179,8 @@ export default function PlayerBridge() {
     }
 
     cancelPendingAudioPlay();
+    loadedTrackIdRef.current = null;
+    pendingTrackIdRef.current = null;
 
     const failedTrackIds = playbackFailureTrackIdsRef.current;
     const hasQueuedFallback =
@@ -1159,6 +1208,24 @@ export default function PlayerBridge() {
     seekToRef.current = seekTo;
   }, [playNext, playPrevious, seekTo]);
 
+  const installMediaSessionActionHandlers = useCallback(() => {
+    setMediaSessionAction("play", () => setIsPlaying(true));
+    setMediaSessionAction("pause", () => setIsPlaying(false));
+
+    // iOS can rebuild the native Now Playing controls when playback starts.
+    // Remove its podcast-style seek commands before advertising track skips.
+    setMediaSessionAction("seekbackward", null);
+    setMediaSessionAction("seekforward", null);
+    setMediaSessionAction("previoustrack", () => playPreviousRef.current());
+    setMediaSessionAction("nexttrack", () => playNextRef.current());
+    setMediaSessionAction("seekto", (details) => {
+      if (typeof details.seekTime === "number") {
+        seekToRef.current(details.seekTime);
+      }
+    });
+    setMediaSessionAction("stop", () => setIsPlaying(false));
+  }, []);
+
   useEffect(() => {
     const mediaSession = getMediaSession();
 
@@ -1166,18 +1233,7 @@ export default function PlayerBridge() {
       return;
     }
 
-    setMediaSessionAction("play", () => setIsPlaying(true));
-    setMediaSessionAction("pause", () => setIsPlaying(false));
-    setMediaSessionAction("previoustrack", () => playPreviousRef.current());
-    setMediaSessionAction("nexttrack", () => playNextRef.current());
-    setMediaSessionAction("seekbackward", null);
-    setMediaSessionAction("seekforward", null);
-    setMediaSessionAction("seekto", (details) => {
-      if (typeof details.seekTime === "number") {
-        seekToRef.current(details.seekTime);
-      }
-    });
-    setMediaSessionAction("stop", () => setIsPlaying(false));
+    installMediaSessionActionHandlers();
 
     return () => {
       mediaSession.playbackState = "none";
@@ -1185,7 +1241,7 @@ export default function PlayerBridge() {
       clearMediaSessionPositionState();
       MEDIA_SESSION_ACTIONS.forEach((action) => setMediaSessionAction(action, null));
     };
-  }, []);
+  }, [installMediaSessionActionHandlers]);
 
   useEffect(() => {
     setMediaSessionTrackMetadata(track);
@@ -1204,7 +1260,7 @@ export default function PlayerBridge() {
 
     mediaSession.playbackState = track ? (isPlaying ? "playing" : "paused") : "none";
 
-    const audio = audioRef.current;
+    const audio = hasCurrentAudioSource() ? audioRef.current : null;
     const audioDuration =
       Number.isFinite(duration) && duration > 0
         ? duration
@@ -1226,7 +1282,7 @@ export default function PlayerBridge() {
     } catch {
       // Ignore browsers that reject position state for streamed or unknown-duration audio.
     }
-  }, [currentTime, duration, isPlaying, track]);
+  }, [currentTime, duration, hasCurrentAudioSource, isPlaying, track]);
 
   function openExpandedPlayer() {
     if (window.matchMedia("(min-width: 640px)").matches) {
@@ -2071,7 +2127,7 @@ export default function PlayerBridge() {
         preload="auto"
         onTimeUpdate={() => {
           const audio = audioRef.current;
-          if (!audio) return;
+          if (!audio || !hasCurrentAudioSource()) return;
           const audioDuration =
             Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : duration;
           const now = performance.now();
@@ -2097,23 +2153,24 @@ export default function PlayerBridge() {
         }}
         onLoadedMetadata={() => {
           const audio = audioRef.current;
-          if (!audio) return;
+          if (!audio || !hasCurrentAudioSource()) return;
           endedHandledRef.current = false;
           applyAudioOutputSettings(audio, audioVolumeRef.current);
-          if (track) {
-            playbackFailureTrackIdsRef.current.delete(track.id);
+          const loadedTrackId = loadedTrackIdRef.current;
+          if (loadedTrackId) {
+            playbackFailureTrackIdsRef.current.delete(loadedTrackId);
           }
           setDuration(Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0);
         }}
         onDurationChange={() => {
           const audio = audioRef.current;
-          if (!audio) return;
+          if (!audio || !hasCurrentAudioSource()) return;
           setDuration(Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0);
         }}
         onCanPlay={() => {
           const audio = audioRef.current;
 
-          if (!audio) {
+          if (!audio || !hasCurrentAudioSource()) {
             return;
           }
 
@@ -2124,6 +2181,11 @@ export default function PlayerBridge() {
           }
         }}
         onPlaying={() => {
+          if (!hasCurrentAudioSource()) {
+            return;
+          }
+
+          installMediaSessionActionHandlers();
           sourceTransitionRef.current = false;
           wantsPlaybackRef.current = true;
           setIsPlaying(true);
@@ -2131,7 +2193,7 @@ export default function PlayerBridge() {
         onPause={() => {
           const audio = audioRef.current;
 
-          if (!audio) {
+          if (!audio || !hasCurrentAudioSource()) {
             return;
           }
 
@@ -2149,10 +2211,18 @@ export default function PlayerBridge() {
           setIsPlaying(false);
         }}
         onError={() => {
+          if (!hasCurrentAudioSource()) {
+            return;
+          }
+
           sourceTransitionRef.current = false;
           handleAudioSourceFailure();
         }}
-        onEnded={handleEnded}
+        onEnded={() => {
+          if (hasCurrentAudioSource()) {
+            handleEnded();
+          }
+        }}
         hidden
       />
 
