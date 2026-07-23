@@ -58,6 +58,7 @@ const PLAYLIST_COVER_QUALITY = 0.82;
 const PLAYLIST_COVER_SIGNED_URL_SECONDS = 60 * 60;
 const TRACK_SIGNED_URL_SECONDS = 60 * 60;
 const SIGNED_URL_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+const PLAYBACK_PREPARE_COUNT = 8;
 
 type LoadDataOptions = {
   showLoading?: boolean;
@@ -77,14 +78,12 @@ type LibraryDataCache = {
 
 let libraryDataCache: LibraryDataCache | null = null;
 
-function offlineObjectUrlsFromTracks(tracks: Track[]) {
-  return tracks
-    .map((track) => track.offlineUrl)
-    .filter((url): url is string => Boolean(url));
+function offlineAudioPath(trackId: string) {
+  return `/offline-audio/${encodeURIComponent(trackId)}`;
 }
 
 function offlineAudioRequest(trackId: string) {
-  return new Request(`/offline-audio/${trackId}`);
+  return new Request(offlineAudioPath(trackId));
 }
 
 function offlineTracksKey(userId: string) {
@@ -147,7 +146,7 @@ async function getCachedAudioUrl(trackId: string) {
     return undefined;
   }
 
-  return URL.createObjectURL(await response.blob());
+  return offlineAudioPath(trackId);
 }
 
 function playlistCoverStoragePath(userId: string, playlistId: string) {
@@ -160,6 +159,10 @@ function hasFreshSignedUrl(track: Track) {
       track.signedUrlExpiresAt &&
       track.signedUrlExpiresAt > Date.now() + SIGNED_URL_REFRESH_WINDOW_MS
   );
+}
+
+function nextTrackSignedUrlExpiration() {
+  return Date.now() + TRACK_SIGNED_URL_SECONDS * 1000;
 }
 
 function playlistCoverSource(playlist: Playlist | null | undefined, signedUrlsById: PlaylistCoverUrlsById) {
@@ -456,7 +459,6 @@ export default function LibraryScreen() {
   const [isDeletingTracks, setIsDeletingTracks] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
-  const offlineObjectUrlsRef = useRef<string[]>([]);
   const isLoadingDataRef = useRef(false);
   const isSavingPreferencesRef = useRef(false);
   const playlistCoverUrlsByIdRef = useRef<PlaylistCoverUrlsById>({});
@@ -570,13 +572,10 @@ export default function LibraryScreen() {
   const displayName = user?.email || "Music Locker";
 
   const replaceTracks = useCallback((nextTracks: Track[]) => {
-    offlineObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-    offlineObjectUrlsRef.current = offlineObjectUrlsFromTracks(nextTracks);
     setTracks(nextTracks);
   }, []);
 
   const hydrateLibraryFromCache = useCallback((cachedData: LibraryDataCache) => {
-    offlineObjectUrlsRef.current = offlineObjectUrlsFromTracks(cachedData.tracks);
     setUser(cachedData.user);
     setTracks(cachedData.tracks);
     setPlaylistsState(cachedData.playlists);
@@ -1236,31 +1235,55 @@ export default function LibraryScreen() {
     };
   }
 
-  async function signTracksForPlayback(inputTracks: Track[]) {
+  async function signTracksForPlayback(inputTracks: Track[], startIndex = 0) {
     if (!navigator.onLine) {
       return inputTracks.filter((track) => Boolean(track.offlineUrl));
     }
 
     const signedTrackUpdates = new Map<string, Pick<Track, "signedUrl" | "signedUrlExpiresAt">>();
+    const safeStartIndex = Math.min(Math.max(startIndex, 0), Math.max(inputTracks.length - 1, 0));
+    const tracksToPrepare = inputTracks.slice(
+      safeStartIndex,
+      safeStartIndex + PLAYBACK_PREPARE_COUNT
+    );
+    const tracksByStoragePath = new Map<string, Track[]>();
 
-    await Promise.all(
-      inputTracks.map(async (track) => {
-        if (track.offlineUrl || hasFreshSignedUrl(track) || !track.storage_path) {
-          return;
-        }
+    tracksToPrepare.forEach((track) => {
+      if (track.offlineUrl || hasFreshSignedUrl(track) || !track.storage_path) {
+        return;
+      }
 
+      const pathTracks = tracksByStoragePath.get(track.storage_path) ?? [];
+      pathTracks.push(track);
+      tracksByStoragePath.set(track.storage_path, pathTracks);
+    });
+
+    if (tracksByStoragePath.size > 0) {
+      try {
         const { data, error } = await supabase.storage
           .from("music")
-          .createSignedUrl(track.storage_path, TRACK_SIGNED_URL_SECONDS);
+          .createSignedUrls([...tracksByStoragePath.keys()], TRACK_SIGNED_URL_SECONDS);
 
-        if (!error && data?.signedUrl) {
-          signedTrackUpdates.set(track.id, {
-            signedUrl: data.signedUrl,
-            signedUrlExpiresAt: Date.now() + TRACK_SIGNED_URL_SECONDS * 1000,
+        if (!error && data) {
+          const signedUrlExpiresAt = nextTrackSignedUrlExpiration();
+
+          data.forEach(({ path, signedUrl }) => {
+            if (!path || !signedUrl) {
+              return;
+            }
+
+            tracksByStoragePath.get(path)?.forEach((track) => {
+              signedTrackUpdates.set(track.id, {
+                signedUrl,
+                signedUrlExpiresAt,
+              });
+            });
           });
         }
-      })
-    );
+      } catch {
+        // PlayerBridge will retry remote tracks from their storage paths.
+      }
+    }
 
     if (signedTrackUpdates.size > 0) {
       setTracks((currentTracks) =>
@@ -1279,7 +1302,12 @@ export default function LibraryScreen() {
 
       const update = signedTrackUpdates.get(track.id);
 
-      return update ? [{ ...track, ...update }] : [];
+      if (update) {
+        return [{ ...track, ...update }];
+      }
+
+      // Remote queue entries are prepared lazily in a small lookahead batch.
+      return track.storage_path ? [track] : [];
     });
   }
 
@@ -1360,8 +1388,12 @@ export default function LibraryScreen() {
     const candidateTracks = navigator.onLine
       ? visibleTracks
       : visibleTracks.filter((track) => track.offlineUrl);
-    const playableTracks = await signTracksForPlayback(candidateTracks);
-    const startIndex = Math.max(0, playableTracks.findIndex((track) => track.id === selectedTrack?.id));
+    const selectedTrackIndex = Math.max(
+      0,
+      candidateTracks.findIndex((track) => track.id === selectedTrack?.id)
+    );
+    const playableTracks = await signTracksForPlayback(candidateTracks, selectedTrackIndex);
+    const startIndex = playableTracks.findIndex((track) => track.id === selectedTrack?.id);
 
     if (playableTracks.length === 0 || startIndex < 0) {
       setStatus("No playable tracks are available.");

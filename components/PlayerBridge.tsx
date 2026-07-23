@@ -14,7 +14,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 import {
   APPEND_EVENT,
   PLAY_EVENT,
@@ -22,6 +21,24 @@ import {
   type PlayerRequest,
   type PlayerTrack,
 } from "@/components/player-events";
+import {
+  DEFAULT_VOLUME_LEVEL,
+  MEDIA_SESSION_ACTIONS,
+  PREPARED_LOOKAHEAD_SIZE,
+  applyAudioOutputSettings,
+  audioElementHasTrackSource,
+  clampVolumeLevel,
+  clearMediaSessionPositionState,
+  createAudioPreloadLink,
+  getMediaSession,
+  hasFreshAudioUrl,
+  mergePreparedTrack,
+  resolvePlayableTrack,
+  resolvePlayableTracks,
+  setMediaSessionAction,
+  setMediaSessionTrackMetadata,
+  volumeLevelToAudioVolume,
+} from "@/components/player/playback";
 
 type RepeatMode = "none" | "all" | "one";
 type QueueSource = "current" | "manual" | "context";
@@ -66,130 +83,11 @@ type QueueDragState = {
   track: PlayerTrack;
 };
 
-type PreloadedTrack = {
-  id: string;
-  audioUrl: string;
-  track: PlayerTrack;
-};
-
-const APP_ICON_ARTWORK = [
-  { src: "/icon-192x192.png", sizes: "192x192", type: "image/png" },
-  { src: "/icon-512x512.png", sizes: "512x512", type: "image/png" },
-];
-const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
-  "play",
-  "pause",
-  "previoustrack",
-  "nexttrack",
-  "seekbackward",
-  "seekforward",
-  "seekto",
-  "stop",
-];
-const TRACK_SIGNED_URL_SECONDS = 60 * 60;
-const SIGNED_URL_REFRESH_WINDOW_MS = 5 * 60 * 1000;
-const PREPARED_LOOKAHEAD_SIZE = 8;
-const DEFAULT_VOLUME_LEVEL = 90;
-const VOLUME_CURVE_EXPONENT = 2;
-
-function clampVolumeLevel(value: number) {
-  if (!Number.isFinite(value)) {
-    return DEFAULT_VOLUME_LEVEL;
-  }
-
-  return Math.min(100, Math.max(0, value));
-}
-
-function volumeLevelToAudioVolume(level: number) {
-  const normalizedLevel = clampVolumeLevel(level) / 100;
-
-  return normalizedLevel ** VOLUME_CURVE_EXPONENT;
-}
-
 function formatTime(value: number) {
   const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
   const minutes = Math.floor(safeValue / 60);
   const seconds = Math.floor(safeValue % 60).toString().padStart(2, "0");
   return `${minutes}:${seconds}`;
-}
-
-function imageTypeFromSource(src: string) {
-  if (!src.startsWith("data:image/")) {
-    return undefined;
-  }
-
-  return src.slice("data:".length).split(";")[0] || undefined;
-}
-
-function artworkForTrack(track: PlayerTrack) {
-  const coverSrc = track.coverDataUrl?.trim();
-
-  if (!coverSrc) {
-    return APP_ICON_ARTWORK;
-  }
-
-  return [
-    { src: coverSrc, sizes: "512x512", type: imageTypeFromSource(coverSrc) },
-    ...APP_ICON_ARTWORK,
-  ];
-}
-
-function getMediaSession() {
-  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
-    return null;
-  }
-
-  return navigator.mediaSession;
-}
-
-function setMediaSessionAction(
-  action: MediaSessionAction,
-  handler: MediaSessionActionHandler | null
-) {
-  try {
-    getMediaSession()?.setActionHandler(action, handler);
-  } catch {
-    // Browsers vary in which Media Session actions they expose.
-  }
-}
-
-function setMediaSessionTrackMetadata(track: PlayerTrack | null) {
-  const mediaSession = getMediaSession();
-
-  if (!mediaSession) {
-    return;
-  }
-
-  mediaSession.metadata = null;
-
-  if (!track || typeof MediaMetadata === "undefined") {
-    return;
-  }
-
-  try {
-    mediaSession.metadata = new MediaMetadata({
-      title: track.title || "Music Locker",
-      artist: track.artist || "Unknown artist",
-      album: "Music Locker",
-      artwork: artworkForTrack(track),
-    });
-  } catch {
-    mediaSession.metadata = null;
-  }
-}
-
-function clearMediaSessionPositionState() {
-  const mediaSession = getMediaSession();
-
-  if (!mediaSession || typeof mediaSession.setPositionState !== "function") {
-    return;
-  }
-
-  try {
-    mediaSession.setPositionState();
-  } catch {
-    // Some browsers expose Media Session but reject position updates.
-  }
 }
 
 function shuffleIndexes(indexes: number[]) {
@@ -241,111 +139,6 @@ function repeatModeIcon(mode: RepeatMode): "repeat" | "repeatOne" {
   }
 
   return "repeat";
-}
-
-function isNonExpiringAudioUrl(audioUrl: string) {
-  return audioUrl.startsWith("blob:") || audioUrl.startsWith("data:") || audioUrl.startsWith("/");
-}
-
-function hasFreshAudioUrl(track: PlayerTrack) {
-  const audioUrl = track.audioUrl.trim();
-
-  if (!audioUrl) {
-    return false;
-  }
-
-  if (isNonExpiringAudioUrl(audioUrl)) {
-    return true;
-  }
-
-  if (!track.storagePath?.trim()) {
-    return true;
-  }
-
-  return Boolean(
-    track.audioUrlExpiresAt &&
-      track.audioUrlExpiresAt > Date.now() + SIGNED_URL_REFRESH_WINDOW_MS
-  );
-}
-
-function audioUrlToElementSrc(audioUrl: string) {
-  if (typeof window === "undefined") {
-    return audioUrl;
-  }
-
-  try {
-    return new URL(audioUrl, window.location.href).href;
-  } catch {
-    return audioUrl;
-  }
-}
-
-function audioElementHasTrackSource(audio: HTMLAudioElement, track: PlayerTrack) {
-  return (audio.currentSrc || audio.src) === audioUrlToElementSrc(track.audioUrl);
-}
-
-function mergePreparedTrack(candidateTrack: PlayerTrack, preparedTrack: PlayerTrack) {
-  return {
-    ...candidateTrack,
-    audioUrl: preparedTrack.audioUrl,
-    audioUrlExpiresAt: preparedTrack.audioUrlExpiresAt ?? candidateTrack.audioUrlExpiresAt,
-  };
-}
-
-function updateQueueEntriesWithPreparedTracks(
-  queue: QueueEntry[],
-  preparedTracks: Map<string, PlayerTrack>
-) {
-  let hasChanges = false;
-  const nextQueue = queue.map((queuedEntry) => {
-    const preparedTrack = preparedTracks.get(queuedEntry.track.id);
-
-    if (!preparedTrack || !hasFreshAudioUrl(preparedTrack)) {
-      return queuedEntry;
-    }
-
-    if (
-      queuedEntry.track.audioUrl === preparedTrack.audioUrl &&
-      queuedEntry.track.audioUrlExpiresAt === preparedTrack.audioUrlExpiresAt
-    ) {
-      return queuedEntry;
-    }
-
-    hasChanges = true;
-    return {
-      ...queuedEntry,
-      track: mergePreparedTrack(queuedEntry.track, preparedTrack),
-    };
-  });
-
-  return hasChanges ? nextQueue : queue;
-}
-
-async function resolvePlayableTrack(track: PlayerTrack) {
-  if (hasFreshAudioUrl(track)) {
-    return track;
-  }
-
-  const storagePath = track.storagePath?.trim();
-  const canTryExistingUrl = Boolean(track.audioUrl.trim() && !track.audioUrlExpiresAt);
-
-  if (!storagePath || typeof navigator === "undefined" || !navigator.onLine) {
-    return canTryExistingUrl ? track : null;
-  }
-
-  const { data, error } = await supabase.storage
-    .from("music")
-    .createSignedUrl(storagePath, TRACK_SIGNED_URL_SECONDS);
-
-  if (error || !data?.signedUrl) {
-    return canTryExistingUrl ? track : null;
-  }
-
-  return {
-    ...track,
-    audioUrl: data.signedUrl,
-    audioUrlExpiresAt: Date.now() + TRACK_SIGNED_URL_SECONDS * 1000,
-  };
 }
 
 function PlayerIcon({
@@ -518,9 +311,11 @@ export default function PlayerBridge() {
   const queueTouchMoveBlockerActiveRef = useRef(false);
   const playRetryTimeoutRef = useRef<number | null>(null);
   const playRequestIdRef = useRef(0);
+  const sourceRequestIdRef = useRef(0);
+  const sourceTransitionRef = useRef(false);
   const wantsPlaybackRef = useRef(false);
   const endedHandledRef = useRef(false);
-  const audioTrackIdRef = useRef<string | null>(null);
+  const audioVolumeRef = useRef(volumeLevelToAudioVolume(DEFAULT_VOLUME_LEVEL));
   const currentTrackRef = useRef<PlayerTrack | null>(null);
   const manualQueueRef = useRef<QueueEntry[]>([]);
   const contextQueueRef = useRef<QueueEntry[]>([]);
@@ -528,12 +323,14 @@ export default function PlayerBridge() {
   const historyRef = useRef<PlayerTrack[]>([]);
   const repeatModeRef = useRef<RepeatMode>("none");
   const isShuffleOnRef = useRef(false);
-  const preloadAudioRef = useRef<HTMLAudioElement | null>(null);
+  const preloadLinkRef = useRef<HTMLLinkElement | null>(null);
   const preloadRequestIdRef = useRef(0);
-  const preloadedTrackRef = useRef<PreloadedTrack | null>(null);
   const preparedTracksRef = useRef<Map<string, PlayerTrack>>(new Map());
   const playbackFailureTrackIdsRef = useRef<Set<string>>(new Set());
   const handleAudioSourceFailureRef = useRef<() => void>(() => {});
+  const playPreviousRef = useRef<() => void>(() => {});
+  const playNextRef = useRef<() => void>(() => {});
+  const seekToRef = useRef<(value: number) => void>(() => {});
   const [currentTrack, setCurrentTrack] = useState<PlayerTrack | null>(null);
   const [manualQueue, setManualQueue] = useState<QueueEntry[]>([]);
   const [contextQueue, setContextQueue] = useState<QueueEntry[]>([]);
@@ -686,34 +483,13 @@ export default function PlayerBridge() {
     clearPlayRetryTimeout();
   }, [clearPlayRetryTimeout]);
 
-  const clearPreloadedTrack = useCallback(() => {
+  const clearAudioPreload = useCallback(() => {
     preloadRequestIdRef.current += 1;
-    preloadedTrackRef.current = null;
-
-    const preloadAudio = preloadAudioRef.current;
-
-    if (!preloadAudio) {
-      return;
-    }
-
-    preloadAudio.pause();
-    preloadAudio.removeAttribute("src");
-    preloadAudio.load();
+    preloadLinkRef.current?.remove();
+    preloadLinkRef.current = null;
   }, []);
 
   const takePreparedTrack = useCallback((candidateTrack: PlayerTrack) => {
-    const preloadedTrack = preloadedTrackRef.current;
-
-    if (
-      preloadedTrack &&
-      preloadedTrack.id === candidateTrack.id &&
-      preloadedTrack.audioUrl
-    ) {
-      preloadedTrackRef.current = null;
-
-      return mergePreparedTrack(candidateTrack, preloadedTrack.track);
-    }
-
     const preparedTrack = preparedTracksRef.current.get(candidateTrack.id);
 
     if (!preparedTrack) {
@@ -759,6 +535,8 @@ export default function PlayerBridge() {
           return;
         }
 
+        sourceTransitionRef.current = false;
+        wantsPlaybackRef.current = false;
         setIsPlaying(false);
       });
     };
@@ -767,16 +545,17 @@ export default function PlayerBridge() {
   }, [clearPlayRetryTimeout]);
 
   useEffect(() => () => {
+    sourceRequestIdRef.current += 1;
     cancelPendingAudioPlay();
-    clearPreloadedTrack();
-  }, [cancelPendingAudioPlay, clearPreloadedTrack]);
+    clearAudioPreload();
+  }, [cancelPendingAudioPlay, clearAudioPreload]);
 
   const loadPlayableTrack = useCallback((audio: HTMLAudioElement, playableTrack: PlayerTrack) => {
-    audioTrackIdRef.current = playableTrack.id;
-    setMediaSessionTrackMetadata(playableTrack);
+    sourceTransitionRef.current = true;
     clearMediaSessionPositionState();
     lastProgressRenderAtRef.current = 0;
     endedHandledRef.current = false;
+    applyAudioOutputSettings(audio, audioVolumeRef.current);
 
     if (!audioElementHasTrackSource(audio, playableTrack)) {
       audio.src = playableTrack.audioUrl;
@@ -801,6 +580,9 @@ export default function PlayerBridge() {
       return;
     }
 
+    const sourceRequestId = sourceRequestIdRef.current + 1;
+    sourceRequestIdRef.current = sourceRequestId;
+
     if (hasFreshAudioUrl(playbackTrack)) {
       loadPlayableTrack(audio, playbackTrack);
       return;
@@ -810,6 +592,7 @@ export default function PlayerBridge() {
 
     void resolvePlayableTrack(playbackTrack).then((playableTrack) => {
       if (
+        sourceRequestIdRef.current !== sourceRequestId ||
         audioRef.current !== audio ||
         currentTrackRef.current?.id !== requestedTrackId
       ) {
@@ -1106,11 +889,13 @@ export default function PlayerBridge() {
   useEffect(() => {
     const audio = audioRef.current;
 
+    audioVolumeRef.current = audioVolume;
+
     if (!audio) {
       return;
     }
 
-    audio.volume = audioVolume;
+    applyAudioOutputSettings(audio, audioVolume);
   }, [audioVolume]);
 
   useEffect(() => {
@@ -1130,7 +915,7 @@ export default function PlayerBridge() {
   useEffect(() => {
     if (!nextPreloadTrack) {
       preparedTracksRef.current.clear();
-      clearPreloadedTrack();
+      clearAudioPreload();
       return;
     }
 
@@ -1138,13 +923,8 @@ export default function PlayerBridge() {
     preloadRequestIdRef.current = requestId;
     const lookaheadTrackIds = new Set(preparedLookaheadTracks.map((preparedTrack) => preparedTrack.id));
 
-    let preloadAudio = preloadAudioRef.current;
-
-    if (!preloadAudio) {
-      preloadAudio = new Audio();
-      preloadAudio.preload = "auto";
-      preloadAudioRef.current = preloadAudio;
-    }
+    preloadLinkRef.current?.remove();
+    preloadLinkRef.current = null;
 
     preparedTracksRef.current.forEach((_, trackId) => {
       if (!lookaheadTrackIds.has(trackId)) {
@@ -1152,145 +932,22 @@ export default function PlayerBridge() {
       }
     });
 
-    const syncPreparedTracksToQueues = () => {
-      const nextManualQueue = updateQueueEntriesWithPreparedTracks(
-        manualQueueRef.current,
-        preparedTracksRef.current
-      );
-      const nextContextQueue = updateQueueEntriesWithPreparedTracks(
-        contextQueueRef.current,
-        preparedTracksRef.current
-      );
-
-      if (nextManualQueue !== manualQueueRef.current) {
-        manualQueueRef.current = nextManualQueue;
-        setManualQueue(nextManualQueue);
-      }
-
-      if (nextContextQueue !== contextQueueRef.current) {
-        contextQueueRef.current = nextContextQueue;
-        setContextQueue(nextContextQueue);
-      }
-    };
-
-    const rememberPlayableTrack = (playableTrack: PlayerTrack | null) => {
-      if (!playableTrack || !hasFreshAudioUrl(playableTrack)) {
-        return;
-      }
-
-      preparedTracksRef.current.set(playableTrack.id, playableTrack);
-      syncPreparedTracksToQueues();
-    };
-
-    void resolvePlayableTrack(nextPreloadTrack)
-      .then((playableTrack) => {
-        if (preloadRequestIdRef.current !== requestId || !preloadAudio) {
-          return;
-        }
-
-        if (!playableTrack) {
-          preloadedTrackRef.current = null;
-          preloadAudio.pause();
-          preloadAudio.removeAttribute("src");
-          preloadAudio.load();
-          return;
-        }
-
-        rememberPlayableTrack(playableTrack);
-
-        preloadedTrackRef.current = {
-          id: playableTrack.id,
-          audioUrl: playableTrack.audioUrl,
-          track: playableTrack,
-        };
-
-        if (!audioElementHasTrackSource(preloadAudio, playableTrack)) {
-          preloadAudio.src = playableTrack.audioUrl;
-          preloadAudio.load();
-        }
-      })
-      .catch(() => {
-        if (preloadRequestIdRef.current === requestId) {
-          preloadedTrackRef.current = null;
-        }
-      });
-
-    const remainingLookaheadTracks = preparedLookaheadTracks.slice(1);
-
-    if (remainingLookaheadTracks.length === 0) {
-      return;
-    }
-
-    void Promise.all(
-      remainingLookaheadTracks.map(async (queuedTrack) => {
-        try {
-          return await resolvePlayableTrack(queuedTrack);
-        } catch {
-          return null;
-        }
-      })
-    ).then((playableTracks) => {
+    void resolvePlayableTracks(preparedLookaheadTracks).then((playableTracks) => {
       if (preloadRequestIdRef.current !== requestId) {
         return;
       }
 
-      playableTracks.forEach(rememberPlayableTrack);
+      playableTracks.forEach((playableTrack, trackId) => {
+        preparedTracksRef.current.set(trackId, playableTrack);
+      });
+
+      const playableNextTrack = playableTracks.get(nextPreloadTrack.id);
+
+      if (playableNextTrack) {
+        preloadLinkRef.current = createAudioPreloadLink(playableNextTrack);
+      }
     });
-  }, [clearPreloadedTrack, nextPreloadTrack, preparedLookaheadTracks]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-
-    if (!audio || !track) {
-      return;
-    }
-
-    let isActive = true;
-    const playbackTrack = takePreparedTrack(track);
-
-    if (
-      playbackTrack.audioUrl &&
-      audioTrackIdRef.current === playbackTrack.id &&
-      audioElementHasTrackSource(audio, playbackTrack)
-    ) {
-      currentTrackRef.current = playbackTrack;
-      endedHandledRef.current = false;
-      setMediaSessionTrackMetadata(playbackTrack);
-      dispatchCurrentTrack(playbackTrack.id);
-      return;
-    }
-
-    cancelPendingAudioPlay();
-    endedHandledRef.current = true;
-    setMediaSessionTrackMetadata(playbackTrack);
-    clearMediaSessionPositionState();
-    audio.pause();
-    lastProgressRenderAtRef.current = 0;
-    dispatchCurrentTrack(playbackTrack.id);
-
-    void resolvePlayableTrack(playbackTrack).then((playableTrack) => {
-      if (!isActive || audioRef.current !== audio) {
-        return;
-      }
-
-      if (!playableTrack) {
-        handleAudioSourceFailureRef.current();
-        return;
-      }
-
-      if (hasFreshAudioUrl(playableTrack)) {
-        preparedTracksRef.current.set(playableTrack.id, playableTrack);
-      }
-
-      currentTrackRef.current = playableTrack;
-      setCurrentTrack(playableTrack);
-      loadPlayableTrack(audio, playableTrack);
-    });
-
-    return () => {
-      isActive = false;
-    };
-  }, [cancelPendingAudioPlay, loadPlayableTrack, track, takePreparedTrack]);
+  }, [clearAudioPreload, nextPreloadTrack, preparedLookaheadTracks]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1302,8 +959,8 @@ export default function PlayerBridge() {
     if (isPlaying) {
       wantsPlaybackRef.current = true;
 
-      if (track) {
-        dispatchCurrentTrack(track.id);
+      if (currentTrackRef.current) {
+        dispatchCurrentTrack(currentTrackRef.current.id);
       }
 
       requestAudioPlay(audio);
@@ -1312,7 +969,7 @@ export default function PlayerBridge() {
       cancelPendingAudioPlay();
       audio.pause();
     }
-  }, [cancelPendingAudioPlay, isPlaying, requestAudioPlay, track]);
+  }, [cancelPendingAudioPlay, isPlaying, requestAudioPlay]);
 
   useEffect(() => {
     function seekBy(seconds: number) {
@@ -1460,6 +1117,8 @@ export default function PlayerBridge() {
       return;
     }
 
+    wantsPlaybackRef.current = false;
+    sourceTransitionRef.current = false;
     setIsPlaying(false);
     dispatchCurrentTrack(null);
     clearMediaSessionPositionState();
@@ -1483,6 +1142,8 @@ export default function PlayerBridge() {
       return;
     }
 
+    wantsPlaybackRef.current = false;
+    sourceTransitionRef.current = false;
     setIsPlaying(false);
     dispatchCurrentTrack(null);
     clearMediaSessionPositionState();
@@ -1493,40 +1154,46 @@ export default function PlayerBridge() {
   }, [handleAudioSourceFailure]);
 
   useEffect(() => {
+    playPreviousRef.current = playPrevious;
+    playNextRef.current = playNext;
+    seekToRef.current = seekTo;
+  }, [playNext, playPrevious, seekTo]);
+
+  useEffect(() => {
     const mediaSession = getMediaSession();
 
     if (!mediaSession) {
       return;
     }
 
-    if (!track) {
-      setMediaSessionTrackMetadata(null);
-      clearMediaSessionPositionState();
-      mediaSession.playbackState = "none";
-      MEDIA_SESSION_ACTIONS.forEach((action) => setMediaSessionAction(action, null));
-      return;
-    }
-
-    setMediaSessionTrackMetadata(track);
-
     setMediaSessionAction("play", () => setIsPlaying(true));
     setMediaSessionAction("pause", () => setIsPlaying(false));
-    setMediaSessionAction("previoustrack", playPrevious);
-    setMediaSessionAction("nexttrack", canPlayNext ? playNext : null);
+    setMediaSessionAction("previoustrack", () => playPreviousRef.current());
+    setMediaSessionAction("nexttrack", () => playNextRef.current());
     setMediaSessionAction("seekbackward", null);
     setMediaSessionAction("seekforward", null);
     setMediaSessionAction("seekto", (details) => {
       if (typeof details.seekTime === "number") {
-        seekTo(details.seekTime);
+        seekToRef.current(details.seekTime);
       }
     });
     setMediaSessionAction("stop", () => setIsPlaying(false));
 
     return () => {
+      mediaSession.playbackState = "none";
       setMediaSessionTrackMetadata(null);
+      clearMediaSessionPositionState();
       MEDIA_SESSION_ACTIONS.forEach((action) => setMediaSessionAction(action, null));
     };
-  }, [canPlayNext, playNext, playPrevious, seekTo, track]);
+  }, []);
+
+  useEffect(() => {
+    setMediaSessionTrackMetadata(track);
+
+    if (!track) {
+      clearMediaSessionPositionState();
+    }
+  }, [track]);
 
   useEffect(() => {
     const mediaSession = getMediaSession();
@@ -2432,22 +2099,59 @@ export default function PlayerBridge() {
           const audio = audioRef.current;
           if (!audio) return;
           endedHandledRef.current = false;
+          applyAudioOutputSettings(audio, audioVolumeRef.current);
           if (track) {
             playbackFailureTrackIdsRef.current.delete(track.id);
           }
-          setDuration(audio.duration || 0);
+          setDuration(Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0);
         }}
         onDurationChange={() => {
           const audio = audioRef.current;
           if (!audio) return;
-          setDuration(audio.duration || 0);
+          setDuration(Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0);
+        }}
+        onCanPlay={() => {
+          const audio = audioRef.current;
+
+          if (!audio) {
+            return;
+          }
+
+          applyAudioOutputSettings(audio, audioVolumeRef.current);
+
+          if (wantsPlaybackRef.current && audio.paused && !audio.ended) {
+            requestAudioPlay(audio);
+          }
+        }}
+        onPlaying={() => {
+          sourceTransitionRef.current = false;
+          wantsPlaybackRef.current = true;
+          setIsPlaying(true);
         }}
         onPause={() => {
           const audio = audioRef.current;
-          if (!audio?.ended || isRepeatOneOn) return;
-          handleEnded();
+
+          if (!audio) {
+            return;
+          }
+
+          if (audio.ended && !isRepeatOneOn) {
+            handleEnded();
+            return;
+          }
+
+          if (sourceTransitionRef.current) {
+            return;
+          }
+
+          wantsPlaybackRef.current = false;
+          cancelPendingAudioPlay();
+          setIsPlaying(false);
         }}
-        onError={handleAudioSourceFailure}
+        onError={() => {
+          sourceTransitionRef.current = false;
+          handleAudioSourceFailure();
+        }}
         onEnded={handleEnded}
         hidden
       />
